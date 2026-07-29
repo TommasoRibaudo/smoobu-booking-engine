@@ -1,0 +1,68 @@
+# Local development dependencies for the booking engine.
+#
+#   docker compose up -d
+#   cd api && npm run migrate:local
+#   npm run dev            # mock Smoobu/PayPal + booking API on :4000 (from api/)
+#   # then start your frontend dev server, proxying /api to :4000
+#
+# Nothing here is used in AWS — production uses RDS, real Smoobu/PayPal, and S3.
+
+services:
+  postgres:
+    # Matches infra/database.tf (engine_version = "15").
+    image: postgres:15-alpine
+    container_name: booking-postgres
+    environment:
+      POSTGRES_DB: booking_engine
+      POSTGRES_USER: booking
+      POSTGRES_PASSWORD: booking
+    ports:
+      # Host 5433 keeps this clear of any other Postgres already on 5432
+      # (other projects, or a native install). Container-side stays standard.
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `npm run migrate:local` depends on this reporting healthy.
+      test: ["CMD-SHELL", "pg_isready -U booking -d booking_engine"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # Stands in for the deposit-receipt S3 bucket. The AWS SDK talks to it over the
+  # same API, so presigned PUT/GET behave as they do against S3.
+  minio:
+    image: minio/minio:latest
+    container_name: booking-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: booking
+      MINIO_ROOT_PASSWORD: booking-local-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Creates the receipts bucket on first boot, then exits.
+  minio-init:
+    image: minio/mc:latest
+    container_name: booking-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 booking booking-local-secret &&
+      mc mb --ignore-existing local/booking-deposit-receipts &&
+      echo 'bucket ready'
+      "
+
+volumes:
+  postgres-data:
+  minio-data:

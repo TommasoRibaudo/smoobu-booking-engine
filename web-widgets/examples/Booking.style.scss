@@ -1,0 +1,1895 @@
+@import '../styles/variables';
+
+// ---------------------------------------------------------------------------
+// Page shell
+// ---------------------------------------------------------------------------
+
+.booking-page {
+  min-height: 100vh;
+  background: $booking-light-cream;
+  color: $booking-text-gray;
+  font-family: $primary-font;
+
+  // Neutralise the global .btn overrides from _common.scss so that
+  // Bootstrap variant classes (btn-primary, btn-outline-secondary, etc.)
+  // work correctly inside the booking page.
+  .btn {
+    background-color: transparent;
+    color: inherit;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+
+    &:focus,
+    &:active:focus,
+    &.active:focus {
+      color: inherit;
+    }
+  }
+
+  .form-control {
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 0.375rem 0.75rem;
+    border: 1px solid rgba(41, 79, 68, 0.28);
+    color: $booking-text-gray;
+
+    &:focus {
+      background-color: #ffffff;
+      box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.24);
+    }
+
+    &::placeholder {
+      color: rgba(23, 23, 23, 0.45);
+    }
+
+    &::-webkit-input-placeholder {
+      color: rgba(23, 23, 23, 0.45);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wizard layout — sliding viewport
+// ---------------------------------------------------------------------------
+
+.booking-wizard {
+  padding: 100px 0 70px;
+  overflow: hidden;
+}
+
+.booking-wizard-viewport {
+  position: relative;
+  overflow: hidden;
+}
+
+.booking-wizard-slide {
+  // Each slide occupies the full width and transitions horizontally.
+  width: 100%;
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
+  will-change: transform, opacity;
+
+  &--active {
+    position: relative;
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  &--left {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  &--right {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    transform: translateX(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step indicator
+// ---------------------------------------------------------------------------
+
+.booking-wizard-steps {
+  margin-bottom: 32px;
+
+  ol {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: step;
+  }
+}
+
+.booking-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  position: relative;
+
+  // Connector line between steps
+  &::after {
+    content: '';
+    flex: 1;
+    height: 2px;
+    background: rgba(41, 79, 68, 0.18);
+    margin: 0 8px;
+  }
+
+  &:last-child::after {
+    display: none;
+  }
+
+  &--done::after {
+    background: $booking-light-green;
+  }
+
+  &--active::after {
+    background: rgba(41, 79, 68, 0.18);
+  }
+}
+
+.booking-wizard-step__dot {
+  align-items: center;
+  background: rgba(41, 79, 68, 0.1);
+  border: 2px solid rgba(41, 79, 68, 0.2);
+  border-radius: 50%;
+  color: rgba(23, 23, 23, 0.5);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+  transition: all 0.3s ease;
+
+  .booking-wizard-step--active & {
+    background: $booking-darker-green;
+    border-color: $booking-darker-green;
+    color: #ffffff;
+    box-shadow: 0 0 0 4px rgba(11, 48, 40, 0.15);
+  }
+
+  .booking-wizard-step--done & {
+    background: $booking-light-green;
+    border-color: $booking-light-green;
+    color: #ffffff;
+  }
+}
+
+.booking-wizard-step__label {
+  color: rgba(23, 23, 23, 0.5);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.3s ease;
+
+  .booking-wizard-step--active & {
+    color: $booking-darker-green;
+  }
+
+  .booking-wizard-step--done & {
+    color: $booking-dark-green;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Back button (used in checkout / deposit slides)
+// ---------------------------------------------------------------------------
+
+.booking-wizard-back {
+  align-items: center;
+  color: $booking-dark-green;
+  display: inline-flex;
+  font-weight: 700;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 0;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    color: $booking-darker-green;
+    text-decoration: none;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search — full (step 1)
+// ---------------------------------------------------------------------------
+
+.booking-search-header {
+  margin-bottom: 28px;
+
+  h1 {
+    color: $booking-darker-green;
+    font-size: 44px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin: 0 0 14px;
+  }
+
+  p {
+    color: $booking-text-gray;
+    font-size: 18px;
+    line-height: 1.6;
+    margin: 0;
+  }
+}
+
+.booking-search-eyebrow,
+.booking-results-kicker {
+  color: $booking-dark-green;
+  font-size: 13px !important;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin-bottom: 8px !important;
+  text-transform: uppercase;
+}
+
+.booking-search-form {
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  background: $booking-opaque-beige;
+  padding: 22px;
+
+  .form-label {
+    color: $booking-darker-green;
+    font-weight: 700;
+  }
+
+  .form-control {
+    background-color: #ffffff;
+    border: 1px solid rgba(41, 79, 68, 0.28);
+    border-radius: 8px;
+    color: $booking-text-gray;
+    min-height: 48px;
+
+    &:focus {
+      background-color: #ffffff;
+      border-color: $booking-dark-green;
+      box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.24);
+    }
+
+    &::placeholder {
+      color: rgba(23, 23, 23, 0.45);
+    }
+  }
+
+  .form-text {
+    color: rgba(23, 23, 23, 0.72);
+  }
+}
+
+.booking-guest-control {
+  display: grid;
+  grid-template-columns: 48px minmax(72px, 1fr) 48px;
+  gap: 8px;
+  position: relative;
+  margin-bottom: 0;
+
+  .btn {
+    background-color: #ffffff;
+    border-color: rgba(41, 79, 68, 0.4);
+    border-radius: 8px;
+    color: $booking-darker-green;
+    font-size: 22px;
+    font-weight: 700;
+    min-height: 48px;
+
+    &:hover,
+    &:focus {
+      background: $booking-light-green;
+      border-color: $booking-light-green;
+      color: #ffffff;
+    }
+
+    &:disabled {
+      background-color: #f5f5f5;
+      border-color: rgba(41, 79, 68, 0.2);
+      color: rgba(23, 23, 23, 0.35);
+    }
+  }
+
+  input {
+    text-align: center;
+  }
+
+  // Stacked layout: the hint stays in flow, otherwise the submit button below
+  // rides up over it and crops the text.
+  + .form-text {
+    display: block;
+    margin-top: 4px;
+  }
+
+  // Side-by-side layout: the row is bottom-aligned, so an in-flow hint would
+  // grow the guests column and lift the stepper above the date inputs.
+  @media (min-width: 768px) {
+    + .form-text {
+      position: absolute;
+    }
+  }
+}
+
+.booking-field-error {
+  color: #9f1d1d;
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.booking-search-submit {
+  align-items: center;
+  background: $booking-light-green;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  display: inline-flex;
+  gap: 10px;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 48px;
+  padding: 12px 22px;
+  width: 100%;
+
+  &:hover,
+  &:disabled {
+    background: $booking-dark-green;
+    color: #ffffff;
+  }
+
+  &:focus,
+  &:focus-visible {
+    background: $booking-dark-green;
+    box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.35);
+    color: #ffffff;
+  }
+}
+
+.booking-search-alert {
+  border-radius: 8px;
+  margin-top: 24px;
+}
+
+// ---------------------------------------------------------------------------
+// Search — compact (step 2+)
+// ---------------------------------------------------------------------------
+
+.booking-search-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  background: $booking-opaque-beige;
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(11, 48, 40, 0.06);
+}
+
+.booking-search-compact__top {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.booking-search-compact__back {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: $booking-dark-green;
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 18px;
+  height: 40px;
+  justify-content: center;
+  padding: 0;
+  width: 40px;
+  border-radius: 50%;
+  transition: background 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(138, 162, 136, 0.18);
+    color: $booking-darker-green;
+  }
+}
+
+.booking-search-compact__form {
+  flex: 1;
+  min-width: 0;
+}
+
+.booking-search-compact__fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.booking-search-compact__field {
+  flex: 1 1 120px;
+  min-width: 0;
+
+  .form-control {
+    min-height: 40px;
+    font-size: 14px;
+    padding: 6px 10px;
+  }
+
+  &--guests {
+    flex: 0 0 auto;
+  }
+}
+
+.booking-search-compact__guest-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  .btn {
+    background-color: #ffffff;
+    border-color: rgba(41, 79, 68, 0.35);
+    border-radius: 6px;
+    color: $booking-darker-green;
+    font-size: 16px;
+    font-weight: 700;
+    height: 34px;
+    width: 34px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &:hover,
+    &:focus {
+      background: $booking-light-green;
+      border-color: $booking-light-green;
+      color: #ffffff;
+    }
+
+    &:disabled {
+      background-color: #f5f5f5;
+      border-color: rgba(41, 79, 68, 0.2);
+      color: rgba(23, 23, 23, 0.35);
+    }
+  }
+}
+
+.booking-search-compact__guest-count {
+  align-items: center;
+  color: $booking-darker-green;
+  display: flex;
+  font-size: 14px;
+  font-weight: 700;
+  gap: 5px;
+  min-width: 36px;
+  justify-content: center;
+}
+
+.booking-search-compact__submit {
+  align-items: center;
+  background: $booking-darker-green;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 16px;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
+
+  &:hover,
+  &:disabled {
+    background: $booking-dark-green;
+    color: #ffffff;
+  }
+
+  &:focus,
+  &:focus-visible {
+    background: $booking-dark-green;
+    box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.35);
+    color: #ffffff;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+.booking-results,
+.booking-results-empty {
+  margin-top: 10px;
+}
+
+.booking-results-summary {
+  align-items: flex-end;
+  border-bottom: 1px solid rgba(41, 79, 68, 0.18);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+
+  h2 {
+    color: $booking-darker-green;
+    font-size: 30px;
+    font-weight: 700;
+    margin: 0;
+  }
+}
+
+.booking-quote-expiry {
+  color: rgba(23, 23, 23, 0.72);
+  font-size: 14px;
+  margin: 0;
+  text-align: right;
+}
+
+// ---------------------------------------------------------------------------
+// Featured home — the listing the guest searched from, promoted above the rest
+// ---------------------------------------------------------------------------
+.booking-results-section-title {
+  color: $booking-darker-green;
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.booking-results-section-count {
+  color: rgba(23, 23, 23, 0.66);
+  font-size: 14px;
+  margin: 2px 0 0;
+}
+
+.booking-results-featured {
+  margin-bottom: 30px;
+
+  .booking-results-section-title {
+    margin-bottom: 14px;
+  }
+}
+
+.booking-results-section {
+  border-top: 1px solid rgba(41, 79, 68, 0.16);
+  margin-bottom: 18px;
+  padding-top: 22px;
+}
+
+.booking-result-card--featured {
+  border: 2px solid $booking-dark-green;
+  box-shadow: 0 6px 22px rgba(11, 48, 40, 0.16);
+}
+
+.booking-results-featured-missing {
+  background: rgba(138, 162, 136, 0.14);
+  border-left: 4px solid $booking-light-green;
+  border-radius: 8px;
+  margin-bottom: 26px;
+  padding: 14px 18px;
+
+  &__title {
+    color: $booking-darker-green;
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  &__body {
+    color: rgba(23, 23, 23, 0.74);
+    font-size: 14px;
+    margin: 4px 0 0;
+  }
+}
+
+.booking-warning-list {
+  background: rgba(138, 162, 136, 0.14);
+  border-left: 4px solid $booking-light-green;
+  border-radius: 8px;
+  color: $booking-darker-green;
+  list-style: none;
+  margin: 0 0 22px;
+  padding: 14px 18px;
+
+  li + li {
+    margin-top: 6px;
+  }
+}
+
+// Footnote under the available homes: same list, quieter voice, so it reads as
+// context rather than as a problem with the search.
+.booking-excluded-note {
+  border-top: 1px solid rgba(41, 79, 68, 0.16);
+  margin-top: 34px;
+  padding-top: 20px;
+
+  &__title {
+    color: rgba(23, 23, 23, 0.74);
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+
+  .booking-warning-list {
+    background: transparent;
+    border-left: none;
+    border-radius: 0;
+    color: rgba(23, 23, 23, 0.66);
+    font-size: 14px;
+    margin: 0;
+    padding: 0;
+
+    li {
+      padding-left: 16px;
+      position: relative;
+
+      &::before {
+        color: $booking-light-green;
+        content: '•';
+        left: 0;
+        position: absolute;
+      }
+    }
+  }
+}
+
+.booking-results-empty {
+  background: $booking-opaque-beige;
+  border: 1px solid rgba(41, 79, 68, 0.16);
+  border-radius: 8px;
+  padding: 28px;
+
+  h2 {
+    color: $booking-darker-green;
+    font-size: 28px;
+    margin: 0 0 10px;
+  }
+
+  p {
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0 0 16px;
+  }
+}
+
+.booking-results-col {
+  display: flex;
+}
+
+// ---------------------------------------------------------------------------
+// Property cards
+// ---------------------------------------------------------------------------
+
+.booking-result-card {
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  background: $booking-opaque-beige;
+  box-shadow: 0 10px 28px rgba(11, 48, 40, 0.08);
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  width: 100%;
+
+  &:hover,
+  &:focus-within {
+    border-color: rgba(41, 79, 68, 0.38);
+    box-shadow: 0 16px 34px rgba(11, 48, 40, 0.16);
+    transform: translateY(-4px);
+  }
+}
+
+.booking-result-card__media-frame {
+  aspect-ratio: 16 / 11;
+  background: rgba(41, 79, 68, 0.12);
+  position: relative;
+}
+
+.booking-result-card__media {
+  color: inherit;
+  display: block;
+  height: 100%;
+  text-decoration: none;
+  width: 100%;
+
+  &:focus-visible {
+    outline: 3px solid rgba(138, 162, 136, 0.65);
+    outline-offset: -3px;
+  }
+
+  img {
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+  }
+}
+
+.booking-result-card__media-hover {
+  align-items: center;
+  background: rgba(11, 48, 40, 0.55);
+  color: $white;
+  display: flex;
+  font-size: 16px;
+  font-weight: 700;
+  inset: 0;
+  justify-content: center;
+  opacity: 0;
+  position: absolute;
+  transition: opacity 0.2s ease;
+
+  .booking-result-card__media:hover &,
+  .booking-result-card__media:focus-visible & {
+    opacity: 1;
+  }
+}
+
+.booking-result-card__status {
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.booking-result-card__status {
+  background: $booking-darker-green;
+  border-radius: 8px;
+  color: $white;
+  font-size: 13px;
+  font-weight: 700;
+  left: 14px;
+  padding: 7px 10px;
+  top: 14px;
+}
+
+.booking-result-card__content-title {
+  color: $booking-darker-green;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.booking-result-card__location {
+  align-items: center;
+  color: $booking-dark-green;
+  display: flex;
+  font-size: 14px;
+  gap: 6px;
+  margin: -10px 0 0;
+  opacity: 0.8;
+
+  svg {
+    font-size: 12px;
+  }
+}
+
+.booking-result-card__content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.booking-result-card__heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.booking-result-card__guest-badge {
+  align-items: center;
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  color: $booking-dark-green;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 700;
+  gap: 7px;
+  line-height: 1;
+  margin: 0;
+  padding: 9px 10px;
+  white-space: nowrap;
+}
+
+.booking-result-card__amenities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  li {
+    align-items: center;
+    background: rgba(138, 162, 136, 0.14);
+    border-radius: 8px;
+    color: $booking-dark-green;
+    display: flex;
+    font-size: 14px;
+    justify-content: center;
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  svg {
+    color: $booking-dark-green;
+    flex: 0 0 auto;
+  }
+
+  span {
+    display: none;
+    overflow-wrap: anywhere;
+  }
+
+  // Expanded state — show labels, match original full view
+  &--expanded li {
+    color: rgba(23, 23, 23, 0.82);
+    gap: 8px;
+    justify-content: flex-start;
+  }
+
+  &--expanded span {
+    display: inline;
+  }
+
+  &--expanded .booking-result-card__amenities-toggle button svg {
+    transform: rotate(45deg);
+  }
+}
+
+// Qualified with `li` so it beats `.booking-result-card__amenities li` above,
+// which would otherwise stack its own padding on top of the button's and leave
+// the toggle taller than every other chip.
+li.booking-result-card__amenities-toggle {
+  background: transparent;
+  padding: 0;
+
+  button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    color: $booking-dark-green;
+    cursor: pointer;
+    display: flex;
+    font-size: 14px;
+    height: 100%;
+    justify-content: center;
+    min-height: 36px;
+    padding: 8px 10px;
+    transition: background 0.15s ease, transform 0.2s ease;
+
+    &:hover {
+      background: rgba(138, 162, 136, 0.14);
+    }
+
+    svg {
+      transition: transform 0.2s ease;
+    }
+  }
+}
+
+.booking-result-card__price {
+  border-top: 1px solid rgba(41, 79, 68, 0.14);
+  display: grid;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 16px;
+
+  span,
+  small {
+    color: rgba(23, 23, 23, 0.72);
+  }
+
+  // Beats the muted `span` colour above, which would otherwise leave the badge
+  // dark grey on dark green.
+  span.booking-result-card__price-label {
+    color: #ffffff;
+  }
+
+  strong {
+    color: $booking-darker-green;
+    font-size: 24px;
+    line-height: 1.2;
+  }
+
+  del {
+    color: rgba(23, 23, 23, 0.45);
+    font-weight: 400;
+    text-decoration: line-through;
+  }
+
+  small del {
+    font-size: inherit;
+    margin-right: 2px;
+  }
+}
+
+.booking-result-card__price-label {
+  background: $booking-darker-green;
+  border-radius: 5px;
+  color: #ffffff;
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+  padding: 3px 7px;
+  width: fit-content;
+}
+
+.booking-result-card__price-original {
+  del {
+    color: rgba(23, 23, 23, 0.45);
+    font-size: 16px;
+    font-weight: 400;
+    text-decoration: line-through;
+  }
+}
+
+.booking-result-card__link {
+  align-items: center;
+  background: $booking-darker-green;
+  border-radius: 8px;
+  color: $white;
+  display: inline-flex;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  text-decoration: none;
+
+  &:hover {
+    background: $booking-dark-green;
+    color: $white;
+    text-decoration: none;
+  }
+
+  &:focus-visible {
+    background: $booking-dark-green;
+    box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.35);
+    color: $white;
+    text-decoration: none;
+  }
+}
+
+.booking-result-card__book-button {
+  background: $booking-darker-green;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 700;
+  min-height: 44px;
+
+  &:hover,
+  &:focus,
+  &:focus-visible,
+  &[aria-pressed='true'] {
+    background: $booking-dark-green;
+    color: #ffffff;
+  }
+}
+
+.booking-result-card__deposit-button {
+  background-color: #ffffff;
+  border-color: rgba(41, 79, 68, 0.45);
+  border-radius: 8px;
+  color: $booking-darker-green;
+  font-weight: 700;
+  min-height: 44px;
+
+  &:hover,
+  &:focus-visible {
+    background: $booking-light-green;
+    border-color: $booking-light-green;
+    color: #ffffff;
+  }
+
+  &:disabled {
+    background-color: #f5f5f5;
+    border-color: rgba(41, 79, 68, 0.2);
+    color: rgba(23, 23, 23, 0.55);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Checkout panel
+// ---------------------------------------------------------------------------
+
+.booking-checkout-panel {
+  background: $booking-opaque-beige;
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  padding: 28px;
+
+  h2,
+  h3 {
+    color: $booking-darker-green;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: 30px;
+    margin: 0 0 10px;
+  }
+
+  h3 {
+    font-size: 20px;
+    margin: 0 0 16px;
+  }
+}
+
+.booking-checkout-panel__header {
+  margin-bottom: 20px;
+
+  p:last-child {
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+  }
+}
+
+.booking-checkout-panel__summary {
+  border-bottom: 1px solid rgba(41, 79, 68, 0.16);
+  border-top: 1px solid rgba(41, 79, 68, 0.16);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 20px;
+  padding: 16px 0;
+
+  div {
+    display: grid;
+    gap: 4px;
+  }
+
+  span,
+  small {
+    color: rgba(23, 23, 23, 0.72);
+  }
+
+  strong {
+    color: $booking-darker-green;
+  }
+}
+
+// "$1,050.00 Long-stay −15%" under the payable total, so the saving survives
+// the step between choosing a home and paying for it.
+.booking-checkout-panel__price-saving {
+  font-size: 13px;
+
+  del {
+    color: rgba(23, 23, 23, 0.45);
+    text-decoration: line-through;
+  }
+}
+
+.booking-checkout-panel__form {
+  .form-label,
+  .form-check-label {
+    color: $booking-darker-green;
+    font-weight: 700;
+  }
+
+  .form-control {
+    background-color: #ffffff;
+    border: 1px solid rgba(41, 79, 68, 0.28);
+    border-radius: 8px;
+    color: $booking-text-gray;
+    min-height: 48px;
+
+    &:focus {
+      background-color: #ffffff;
+      border-color: $booking-dark-green;
+      box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.24);
+    }
+
+    &::placeholder {
+      color: rgba(23, 23, 23, 0.45);
+    }
+  }
+
+  textarea.form-control {
+    min-height: 112px;
+  }
+
+  .form-text {
+    color: rgba(23, 23, 23, 0.72);
+  }
+}
+
+.booking-checkout-panel__actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.booking-checkout-panel__hold {
+  display: grid;
+  gap: 16px;
+  line-height: 1.6;
+
+  h3,
+  p {
+    margin: 0;
+  }
+}
+
+.booking-checkout-panel__timer {
+  background: rgba(138, 162, 136, 0.14);
+  border: 1px solid rgba(41, 79, 68, 0.14);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+
+  span,
+  small {
+    color: rgba(23, 23, 23, 0.72);
+  }
+
+  strong {
+    color: $booking-darker-green;
+    font-size: 30px;
+    line-height: 1.1;
+  }
+}
+
+.booking-checkout-panel__reservation {
+  color: $booking-darker-green;
+}
+
+.booking-checkout-panel__notice {
+  border-radius: 8px;
+  margin: 0;
+}
+
+.booking-checkout-panel__contacts {
+  border-top: 1px solid rgba(41, 79, 68, 0.16);
+  margin-top: 24px;
+  padding-top: 20px;
+
+  h3 {
+    color: $booking-darker-green;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+}
+
+.booking-checkout-panel__contacts-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.booking-checkout-panel__contact {
+  border: 1px solid rgba(41, 79, 68, 0.24);
+  border-radius: 8px;
+  color: $booking-darker-green;
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 14px;
+  text-decoration: none;
+
+  span {
+    color: rgba(23, 23, 23, 0.72);
+    font-size: 14px;
+  }
+
+  strong {
+    overflow-wrap: anywhere;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(138, 162, 136, 0.14);
+    border-color: $booking-dark-green;
+    color: $booking-darker-green;
+    text-decoration: none;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PayPal return panel
+// ---------------------------------------------------------------------------
+
+.booking-return-panel {
+  background: $booking-opaque-beige;
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  margin-top: 34px;
+  padding: 28px;
+
+  h1,
+  h2 {
+    color: $booking-darker-green;
+    font-weight: 700;
+  }
+
+  h1 {
+    font-size: 34px;
+    margin: 0 0 20px;
+  }
+
+  h2 {
+    font-size: 24px;
+    margin: 0 0 8px;
+  }
+}
+
+.booking-return-panel__status {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  line-height: 1.6;
+
+  .spinner-border {
+    color: $booking-darker-green;
+    flex: 0 0 auto;
+    height: 44px;
+    width: 44px;
+  }
+
+  p {
+    margin: 0;
+  }
+}
+
+.booking-return-panel__notice {
+  border-radius: 8px;
+  margin: 0;
+}
+
+.booking-return-panel__confirmed {
+  display: grid;
+  gap: 16px;
+
+  p {
+    margin: 0;
+  }
+
+  dl {
+    border-top: 1px solid rgba(41, 79, 68, 0.16);
+    display: grid;
+    gap: 12px;
+    margin: 0;
+    padding-top: 16px;
+  }
+
+  div {
+    display: grid;
+    gap: 3px;
+  }
+
+  dt {
+    color: rgba(23, 23, 23, 0.72);
+    font-size: 14px;
+  }
+
+  dd {
+    color: $booking-darker-green;
+    font-weight: 700;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation panel
+// ---------------------------------------------------------------------------
+
+.booking-confirmation-panel {
+  background: $booking-opaque-beige;
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  padding: 28px;
+  text-align: center;
+
+  h1 {
+    color: $booking-darker-green;
+    font-size: 34px;
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+
+  p {
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0 0 20px;
+  }
+}
+
+.booking-confirmation-panel__icon {
+  align-items: center;
+  background: $booking-light-green;
+  border-radius: 50%;
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 28px;
+  height: 64px;
+  justify-content: center;
+  margin-bottom: 18px;
+  width: 64px;
+}
+
+.booking-confirmation-panel__details {
+  border-bottom: 1px solid rgba(41, 79, 68, 0.16);
+  border-top: 1px solid rgba(41, 79, 68, 0.16);
+  display: grid;
+  gap: 14px;
+  margin: 0 0 22px;
+  padding: 18px 0;
+  text-align: left;
+
+  div {
+    display: grid;
+    gap: 4px;
+  }
+
+  dt {
+    color: rgba(23, 23, 23, 0.72);
+    font-size: 14px;
+  }
+
+  dd {
+    color: $booking-darker-green;
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.booking-confirmation-panel__manage {
+  align-items: center;
+  background: $booking-darker-green;
+  border: 0;
+  border-radius: 8px;
+  color: $white;
+  display: inline-flex;
+  font-weight: 700;
+  gap: 10px;
+  justify-content: center;
+  min-height: 48px;
+  padding: 12px 24px;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    background: $booking-dark-green;
+    color: $white;
+    text-decoration: none;
+  }
+
+  &:disabled {
+    background: $booking-dark-green;
+    color: #ffffff;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manual deposit handoff
+// ---------------------------------------------------------------------------
+
+.booking-deposit-handoff {
+  background: $booking-opaque-beige;
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  padding: 28px;
+
+  h2,
+  h3 {
+    color: $booking-darker-green;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: 30px;
+    margin: 0 0 10px;
+  }
+
+  h3 {
+    font-size: 20px;
+    margin: 0 0 8px;
+  }
+}
+
+.booking-deposit-handoff__header {
+  margin-bottom: 20px;
+
+  p:last-child {
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+  }
+}
+
+.booking-deposit-handoff__notice {
+  align-items: flex-start;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.booking-deposit-handoff__context {
+  border-bottom: 1px solid rgba(41, 79, 68, 0.16);
+  border-top: 1px solid rgba(41, 79, 68, 0.16);
+  display: grid;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding: 16px 0;
+
+  p {
+    margin: 0;
+  }
+}
+
+.booking-deposit-handoff__body {
+  display: grid;
+  gap: 10px;
+  line-height: 1.6;
+  margin-bottom: 22px;
+
+  p {
+    margin: 0;
+  }
+}
+
+.booking-deposit-handoff__bank-info {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 22px;
+}
+
+.booking-deposit-handoff__bank-card {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(41, 79, 68, 0.18);
+  border-radius: 8px;
+  padding: 16px;
+
+  h3 {
+    font-size: 17px;
+    margin: 0 0 12px;
+  }
+
+  dl {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+  }
+
+  dt {
+    color: rgba(23, 23, 23, 0.6);
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 8px;
+
+    &:first-of-type {
+      margin-top: 0;
+    }
+  }
+
+  dd {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+  }
+}
+
+.booking-deposit-handoff__iban {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px !important;
+  letter-spacing: 0.5px;
+  word-break: break-all;
+}
+
+.booking-deposit-handoff__colones-amount {
+  border-top: 1px dashed rgba(41, 79, 68, 0.24);
+  color: $booking-darker-green;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 12px 0 0;
+  padding-top: 12px;
+}
+
+// The estimate sits under the dollar total it converts, deliberately quieter
+// than the figure the guest is actually charged.
+.booking-colones-estimate {
+  color: rgba(23, 23, 23, 0.6) !important;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.booking-colones-note {
+  color: rgba(23, 23, 23, 0.6);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 12px 0 0;
+}
+
+.booking-deposit-handoff__contacts {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.booking-deposit-handoff__contact {
+  border: 1px solid rgba(41, 79, 68, 0.24);
+  border-radius: 8px;
+  color: $booking-darker-green;
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 14px;
+  text-decoration: none;
+
+  span {
+    color: rgba(23, 23, 23, 0.72);
+    font-size: 14px;
+  }
+
+  strong {
+    overflow-wrap: anywhere;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(138, 162, 136, 0.14);
+    border-color: $booking-dark-green;
+    color: $booking-darker-green;
+    text-decoration: none;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rate toggle (refundable / non-refundable)
+// ---------------------------------------------------------------------------
+
+.booking-rate-toggle-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+
+  .form-switch {
+    margin-bottom: 0;
+  }
+
+  .form-switch .form-check-input {
+    margin-top: 0.1em;
+  }
+
+  .form-check-label {
+    color: $booking-darker-green;
+    font-weight: 700;
+    font-size: 15px;
+  }
+
+  .form-switch .form-check-input {
+    background-color: rgba(41, 79, 68, 0.2);
+    border-color: rgba(41, 79, 68, 0.3);
+    cursor: pointer;
+    height: 1.4em;
+    width: 2.6em;
+
+    &:checked {
+      background-color: $booking-darker-green;
+      border-color: $booking-darker-green;
+    }
+
+    &:focus {
+      box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.24);
+    }
+  }
+}
+
+.booking-rate-toggle__badge {
+  background: $booking-darker-green;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+}
+
+.booking-rate-toggle__note {
+  color: rgba(23, 23, 23, 0.65);
+  flex-basis: 100%;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+// Pet toggle — same switch treatment as the rate toggle, with the paw sitting
+// ahead of the label so the row scans as "🐾 travelling with a pet".
+.booking-pet-toggle {
+  .form-check-label svg {
+    margin-right: 6px;
+  }
+}
+
+// Sits under the result count when the pet filter hid homes that are otherwise
+// free, so the shorter list never looks like missing availability.
+.booking-results-pet-note {
+  align-items: center;
+  color: rgba(23, 23, 23, 0.65);
+  display: flex;
+  font-size: 13px;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+
+// Compact form rate toggle — own row below the search fields
+.booking-search-compact__rate-row {
+  align-items: center;
+  border-top: 1px solid rgba(41, 79, 68, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+
+  .form-switch {
+    margin-bottom: 0;
+  }
+
+  .form-switch .form-check-input {
+    background-color: rgba(41, 79, 68, 0.2);
+    border-color: rgba(41, 79, 68, 0.3);
+    cursor: pointer;
+    height: 1.4em;
+    margin-top: 0.1em;
+    width: 2.6em;
+
+    &:checked {
+      background-color: $booking-darker-green;
+      border-color: $booking-darker-green;
+    }
+
+    &:focus {
+      box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.24);
+    }
+  }
+
+  .form-check-label {
+    color: $booking-darker-green;
+    font-size: 13px;
+    font-weight: 700;
+    margin-left: 6px;
+    white-space: nowrap;
+  }
+
+  .booking-rate-toggle__badge {
+    font-size: 11px;
+    padding: 3px 6px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Captcha widget
+// ---------------------------------------------------------------------------
+
+.booking-captcha-widget {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+// ---------------------------------------------------------------------------
+// Responsive
+// ---------------------------------------------------------------------------
+
+@media (max-width: 1199px) {
+  .booking-result-card__content {
+    padding: 16px;
+  }
+
+  .booking-result-card__content-title {
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 992px) {
+  .booking-wizard {
+    padding: 90px 0 52px;
+  }
+
+  .booking-search-header h1 {
+    font-size: 34px;
+  }
+
+  .booking-results-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .booking-quote-expiry {
+    text-align: left;
+  }
+
+  .booking-deposit-handoff__contacts {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-deposit-handoff__bank-info {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-checkout-panel__contacts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-checkout-panel__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-return-panel__status {
+    align-items: flex-start;
+  }
+
+  // Step indicator: hide labels on tablet, show only dots
+  .booking-wizard-step__label {
+    display: none;
+  }
+
+  .booking-wizard-step {
+    gap: 0;
+  }
+}
+
+@media (max-width: 575px) {
+  .booking-search-form,
+  .booking-results-empty,
+  .booking-checkout-panel,
+  .booking-return-panel,
+  .booking-confirmation-panel,
+  .booking-deposit-handoff {
+    padding: 18px;
+  }
+
+  .booking-result-card__content-title {
+    font-size: 21px;
+  }
+
+  // Compact grid of equal cells instead of one full-width chip per row. Collapsed
+  // cells only hold an icon, so they can be small; expanded cells hold the label
+  // too and need a wider track.
+  .booking-result-card__amenities {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+
+    li:not(.booking-result-card__amenities-toggle) {
+      font-size: 13px;
+      // Matches the toggle button so chips stay the same height even when the
+      // grid wraps and a row has no toggle in it to stretch against.
+      min-height: 34px;
+      padding: 7px 4px;
+    }
+
+    &--expanded {
+      grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    }
+
+    &--expanded li:not(.booking-result-card__amenities-toggle) {
+      padding: 7px 9px;
+    }
+  }
+
+  li.booking-result-card__amenities-toggle button {
+    min-height: 34px;
+    padding: 7px 4px;
+    width: 100%;
+  }
+
+  .booking-search-compact {
+    padding: 10px 12px;
+  }
+
+  .booking-search-compact__top {
+    flex-wrap: wrap;
+  }
+
+  .booking-search-compact__fields {
+    flex-wrap: wrap;
+  }
+
+  .booking-search-compact__field {
+    flex: 1 1 100%;
+  }
+
+  .booking-search-compact__field--guests {
+    flex: 0 0 auto;
+  }
+
+  .booking-wizard-steps {
+    margin-bottom: 20px;
+  }
+
+  .booking-wizard-step__dot {
+    height: 28px;
+    width: 28px;
+    font-size: 12px;
+  }
+}
+
+// Deposit checkout — reuses the PayPal panel shell, adds the receipt upload step.
+.booking-deposit-checkout {
+  &__held {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  &__upload {
+    border-top: 1px solid rgba(41, 79, 68, 0.18);
+    padding-top: 20px;
+
+    h3 {
+      color: $booking-darker-green;
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 8px;
+    }
+
+    p {
+      color: $booking-text-gray;
+      font-size: 14px;
+      margin: 0 0 12px;
+    }
+
+    input[type='file'] {
+      border: 1px dashed rgba(41, 79, 68, 0.35);
+      border-radius: 8px;
+      padding: 12px;
+      width: 100%;
+    }
+  }
+
+  &__upload-warning {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+
+  &__uploading {
+    align-items: center;
+    color: $booking-dark-green;
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  &__staff-note {
+    color: #888;
+    font-size: 13px;
+    margin-top: 12px;
+  }
+}

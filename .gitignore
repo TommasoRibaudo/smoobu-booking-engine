@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+api/dist/
+*.tsbuildinfo
+
+# Environment files — may contain secrets
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+.vscode/settings.json
+
+# Test output
+coverage/
+
+# ---------------------------------------------------------------------------
+# Terraform
+# ---------------------------------------------------------------------------
+
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Local backend override files — differ per environment, never shared
+infra/backend*.hcl
+!infra/backend.hcl.example
+
+# Environment tfvars hold no credentials (secrets are referenced by name, not
+# value) but do describe the VPC/subnet layout and Secrets Manager paths,
+# which is reconnaissance material for a public repo.
+infra/environments/*.tfvars
+!infra/environments/example.tfvars
+
+# Lambda build artifacts — rebuilt by Terraform's archive_file, not versioned
+infra/lambda/*.zip

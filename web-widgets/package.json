@@ -1,0 +1,62 @@
+{
+  "name": "@smoobu-booking-engine/web-widgets",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React components for a Smoobu-backed booking engine: an availability calendar with price dots and a booking search widget, plus a reference checkout page example.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "^6.0.0"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-svg-core": "^6.3.0",
+    "@fortawesome/free-solid-svg-icons": "^6.3.0",
+    "@fortawesome/react-fontawesome": "^0.2.0",
+    "react-bootstrap": "^2.7.2",
+    "react-google-recaptcha-v3": "^1.10.1",
+    "react-helmet": "^6.1.0",
+    "posthog-js": "^1.365.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^5.16.5",
+    "@testing-library/react": "^13.4.0",
+    "@types/jest": "^30.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/react-helmet": "^6.1.6",
+    "identity-obj-proxy": "^3.0.0",
+    "jest": "^30.3.0",
+    "jest-environment-jsdom": "^30.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.8.1",
+    "ts-jest": "^29.4.9",
+    "typescript": "^5.6.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "jsdom",
+    "testMatch": [
+      "<rootDir>/src/**/*.test.ts",
+      "<rootDir>/src/**/*.test.tsx",
+      "<rootDir>/examples/**/*.test.ts",
+      "<rootDir>/examples/**/*.test.tsx"
+    ],
+    "moduleNameMapper": {
+      "\\.(scss|css)$": "identity-obj-proxy"
+    },
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.ts"],
+    "transform": {
+      "^.+\\.tsx?$": [
+        "ts-jest",
+        {
+          "tsconfig": "tsconfig.json"
+        }
+      ]
+    }
+  }
+}

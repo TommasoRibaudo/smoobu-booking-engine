@@ -1,0 +1,45 @@
+{
+  "name": "@smoobu-booking-engine/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS Lambda backend for a Smoobu-backed vacation rental booking engine (availability, holds, PayPal payments, manual deposits, guest portal).",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copyMigrations.js",
+    "migrate": "node scripts/migrate.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest",
+    "dev": "npm run build && node scripts/devAll.js",
+    "dev:api": "node scripts/devServer.js",
+    "dev:mocks": "node scripts/mockProviders.js",
+    "migrate:local": "node scripts/migrateLocal.js"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/src/**/*.test.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-ses": "^3.1030.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
+    "fast-check": "^4.7.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1039.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.1039.0",
+    "pg": "^8.20.0"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8"
+  }
+}

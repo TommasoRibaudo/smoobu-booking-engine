@@ -1,0 +1,284 @@
+@import '../../styles/variables';
+
+.calendar-with-price-dots {
+  border-top: 1px solid rgba(11, 48, 40, 0.12);
+  margin-top: 16px;
+  padding-top: 16px;
+  color: $booking-text-gray;
+  font-family: $primary-font;
+
+  &__header {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+
+    h2 {
+      color: $booking-darker-green;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    p {
+      font-size: 13px;
+      line-height: 1.35;
+      margin: 4px 0 0;
+    }
+  }
+
+  // Fixed-width arrows with a flexible label between them. The sidebar column
+  // is ~166px wide, so the arrows are sized to survive it rather than being
+  // squeezed until their glyphs clip.
+  &__nav {
+    align-items: center;
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) 26px;
+    gap: 4px;
+    width: 100%;
+
+    button {
+      align-items: center;
+      background: #ffffff;
+      border: 1px solid rgba(11, 48, 40, 0.3);
+      border-radius: 7px;
+      color: $booking-darker-green;
+      display: inline-flex;
+      flex: 0 0 auto;
+      font-size: 16px;
+      font-weight: 700;
+      height: 26px;
+      justify-content: center;
+      line-height: 1;
+      overflow: hidden;
+      padding: 0;
+      transition: background-color 0.2s ease, color 0.2s ease;
+      width: 26px;
+
+      &:hover:not(:disabled),
+      &:focus-visible:not(:disabled) {
+        background: $booking-darker-green;
+        color: #ffffff;
+      }
+
+      &:disabled {
+        cursor: not-allowed;
+        opacity: 0.35;
+      }
+    }
+
+    span {
+      color: $booking-dark-green;
+      font-size: 13px;
+      font-weight: 700;
+      min-width: 0;
+      overflow: hidden;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      // No `text-transform: capitalize` — it would title-case the Spanish
+      // preposition ("Julio De 2026"). formatMonthLabel raises the first
+      // letter only.
+    }
+  }
+
+  &__weekdays,
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  &__weekdays {
+    color: $booking-dark-green;
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  &__grid {
+    border: 1px solid rgba(11, 48, 40, 0.12);
+    border-bottom: 0;
+    border-right: 0;
+  }
+
+  &__status {
+    font-size: 13px;
+    margin: 10px 0 0;
+    text-align: center;
+
+    &--error {
+      color: #8f1d17;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  &__clear {
+    background: none;
+    border: 0;
+    color: $booking-dark-green;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px;
+    text-decoration: underline;
+
+    &:hover,
+    &:focus-visible {
+      color: $booking-darker-green;
+    }
+  }
+
+  &__legend {
+    display: grid;
+    gap: 6px 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+
+    li {
+      align-items: center;
+      display: inline-flex;
+      font-size: 12px;
+      gap: 6px;
+      min-width: 0;
+    }
+  }
+}
+
+.calendar-date-cell {
+  align-items: center;
+  aspect-ratio: 1;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(11, 48, 40, 0.12);
+  border-left: 0;
+  border-right: 1px solid rgba(11, 48, 40, 0.12);
+  border-top: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0;
+
+  &:hover:not(:disabled),
+  &:focus-visible:not(:disabled) {
+    background: rgba(138, 162, 136, 0.12);
+    outline: 2px solid rgba(11, 48, 40, 0.32);
+    outline-offset: -2px;
+  }
+
+  &--empty {
+    background: rgba(138, 162, 136, 0.08);
+    cursor: default;
+  }
+
+  // Anything that cannot be picked right now: a night already gone, a booked
+  // night, or — once a check-in is chosen — a date that would span a booked
+  // night. Struck through and greyed, the convention guests know from Airbnb.
+  &--blocked {
+    background: rgba(138, 162, 136, 0.06);
+    cursor: default;
+
+    .calendar-date-cell__number {
+      color: #b0b0b0;
+      text-decoration: line-through;
+    }
+
+    .price-dot {
+      opacity: 0.45;
+    }
+  }
+
+  &--past {
+    opacity: 0.7;
+  }
+
+  &--in-range {
+    background: rgba(138, 162, 136, 0.22);
+  }
+
+  &--range-start,
+  &--range-end {
+    background: $booking-darker-green;
+
+    .calendar-date-cell__number {
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .price-dot {
+      border-color: rgba(255, 255, 255, 0.6);
+    }
+  }
+
+  &__number {
+    color: $booking-text-gray;
+    font-size: 12px;
+    line-height: 1;
+  }
+}
+
+.price-dot {
+  border: 1px solid rgba(11, 48, 40, 0.14);
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 8px;
+  margin-top: 4px;
+  width: 8px;
+
+  &--green {
+    background-color: #4caf50;
+  }
+
+  &--yellow {
+    background-color: #ffc107;
+  }
+
+  &--red {
+    background-color: #f44336;
+  }
+
+  &--grey {
+    background-color: #bdbdbd;
+  }
+}
+
+@media (max-width: 1199px) {
+  .calendar-with-price-dots {
+    &__header h2 {
+      font-size: 17px;
+    }
+  }
+}
+
+@media (max-width: 992px) {
+  .calendar-with-price-dots {
+    &__legend {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  .calendar-date-cell {
+    min-height: 38px;
+  }
+}
+
+@media (max-width: 420px) {
+  .calendar-with-price-dots {
+    &__legend {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+}

@@ -1,0 +1,340 @@
+@import '../../styles/variables';
+
+// ---------------------------------------------------------------------------
+// BookingSearchWidget — replaces Smoobu iframe on listing & home pages
+// ---------------------------------------------------------------------------
+
+.booking-search-widget {
+  background: #ffffff;
+  border: 1px solid rgba(41, 79, 68, 0.15);
+  border-radius: 14px;
+  padding: 24px 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  font-family: $primary-font;
+
+  // Reset Bootstrap .btn overrides that leak from parent pages
+  .btn {
+    background-color: transparent;
+    color: inherit;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+  }
+
+  // ---- Header ----
+  &__header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  &__icon {
+    font-size: 22px;
+    color: $booking-dark-green;
+    margin-top: 3px;
+    flex-shrink: 0;
+  }
+
+  &__title {
+    font-size: 18px;
+    font-weight: 700;
+    color: $booking-darker-green;
+    margin: 0 0 2px;
+    line-height: 1.3;
+  }
+
+  // Host pages carry legacy global typography — `.hero-area .block p` in
+  // styles/style.css paints every nested paragraph white at 70% width, which
+  // made this subtitle invisible on the homepage hero. The widget restates its
+  // own paragraph values so it renders identically wherever it is embedded.
+  &__subtitle {
+    font-size: 13px !important;
+    color: rgba(23, 23, 23, 0.6) !important;
+    width: auto !important;
+    margin: 0 !important;
+    line-height: 1.4;
+  }
+
+  // ---- Form ----
+  &__form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  &__field {
+    .form-label,
+    .booking-search-widget__label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: $booking-dark-green;
+      margin-bottom: 4px;
+    }
+  }
+
+  // ---- Date picker ----
+  &__dates {
+    position: relative;
+  }
+
+  // The calendar lives inside the widget, so it drops the standalone card's
+  // top rule and spacing.
+  &__calendar .calendar-with-price-dots {
+    border-top: 0;
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  &__range {
+    font-size: 13px !important;
+    font-weight: 600;
+    color: $booking-darker-green !important;
+    width: auto !important;
+    margin: 10px 0 0 !important;
+    line-height: 1.4;
+    text-align: left;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+  }
+
+  &__error {
+    font-size: 12px !important;
+    color: #8f1d17 !important;
+    width: auto !important;
+    margin: 6px 0 0 !important;
+    line-height: 1.4;
+    text-align: left;
+  }
+
+  &__dates-trigger {
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid rgba(41, 79, 68, 0.28);
+    border-radius: 8px;
+    color: $booking-text-gray;
+    cursor: pointer;
+    display: flex;
+    font-size: 15px;
+    gap: 8px;
+    padding: 10px 12px;
+    text-align: left;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    width: 100%;
+
+    svg {
+      color: $booking-dark-green;
+      flex-shrink: 0;
+    }
+
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &:focus-visible {
+      border-color: $booking-dark-green;
+      box-shadow: 0 0 0 3px rgba(138, 162, 136, 0.24);
+      outline: none;
+    }
+
+    &--invalid {
+      border-color: #8f1d17;
+    }
+  }
+
+  &__calendar-popover {
+    background: #ffffff;
+    border: 1px solid rgba(41, 79, 68, 0.18);
+    border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+    left: 0;
+    margin-top: 6px;
+    max-width: calc(100vw - 32px);
+    padding: 16px;
+    position: absolute;
+    top: 100%;
+    width: 320px;
+    z-index: 30;
+
+    .calendar-with-price-dots {
+      border-top: 0;
+      margin-top: 0;
+      padding-top: 0;
+    }
+  }
+
+  // The person icon + count already say "guests"; the label is redundant
+  // clutter once the stepper is centered on mobile.
+  &__field--guests {
+    @media (max-width: 767.98px) {
+      .form-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+    }
+  }
+
+  // ---- Guest stepper ----
+  &__guest-control {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    @media (max-width: 767.98px) {
+      justify-content: center;
+    }
+
+    .btn {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-size: 16px;
+      font-weight: 600;
+      border: 1px solid rgba(41, 79, 68, 0.3);
+      color: $booking-dark-green;
+      background: #fff;
+      transition: background 0.15s, border-color 0.15s;
+
+      &:hover:not(:disabled) {
+        background: rgba(138, 162, 136, 0.12);
+        border-color: $booking-dark-green;
+      }
+
+      &:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+    }
+  }
+
+  &__hint {
+    font-size: 12px !important;
+    line-height: 1.4;
+    color: rgba(23, 23, 23, 0.6) !important;
+    width: auto !important;
+    margin: 6px 0 0 !important;
+    text-align: left;
+  }
+
+  &__guest-count {
+    font-size: 16px;
+    font-weight: 600;
+    color: $booking-text-gray;
+    min-width: 40px;
+    text-align: center;
+
+    svg {
+      margin-right: 4px;
+      color: $booking-dark-green;
+    }
+  }
+
+  // ---- Submit button ----
+  &__submit {
+    width: 100%;
+    padding: 14px 20px !important;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    background: $booking-darker-green !important;
+    color: #fff !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+    margin-top: 4px;
+    // The sidebar column is ~166px wide and "Buscar Disponibilidad" is longer
+    // still, so the label wraps instead of being clipped mid-word.
+    white-space: normal;
+    line-height: 1.25;
+    text-align: center;
+
+    &:hover:not(:disabled) {
+      background: $booking-dark-green !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(11, 48, 40, 0.25);
+    }
+
+    &:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    &:disabled {
+      opacity: 0.65;
+    }
+
+    svg {
+      font-size: 14px;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Variant: hero (for homepages — horizontal layout on desktop)
+  // ---------------------------------------------------------------------------
+  &--hero {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 28px 32px;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+
+    @media (min-width: 768px) {
+      .booking-search-widget__form {
+        display: grid;
+        // Dates now occupy a single trigger, so the row is dates | guests | go.
+        grid-template-columns: 2fr 1fr auto;
+        gap: 16px;
+        align-items: end;
+      }
+
+      // The field row is bottom-aligned, so the hint gets its own full-width
+      // row rather than growing the guests column and shoving the dates up.
+      .booking-search-widget__hint {
+        grid-column: 1 / -1;
+      }
+
+      .booking-search-widget__submit {
+        margin-top: 0;
+        height: 46px;
+        white-space: nowrap;
+        padding: 10px 24px !important;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Variant: sidebar (for listing pages — stacked layout, sticky on desktop)
+  // ---------------------------------------------------------------------------
+  &--sidebar {
+    // Trimmed from 24px/20px: the embedded calendar needs every pixel of the
+    // narrow listing column, and the month arrows were being squeezed.
+    padding: 20px 14px;
+
+    @media (min-width: 992px) {
+      position: sticky;
+      top: 80px;
+    }
+
+    .booking-search-widget__submit {
+      font-size: 15px !important;
+      padding: 12px 10px !important;
+    }
+  }
+}

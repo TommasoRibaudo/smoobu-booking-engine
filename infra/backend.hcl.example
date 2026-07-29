@@ -1,0 +1,12 @@
+# Copy to backend-<env>.hcl and fill in your own values.
+# backend-*.hcl files are gitignored — never commit them.
+#
+# Bootstrap the bucket/table first (see the comment block at the top of
+# main.tf), then initialize with:
+#   terraform init -backend-config=backend-dev.hcl -reconfigure
+
+bucket         = "myproject-tfstate-<account-id>"
+key            = "booking-engine/dev/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "myproject-tfstate-lock"
+encrypt        = true
