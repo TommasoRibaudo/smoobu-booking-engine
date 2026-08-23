@@ -337,7 +337,9 @@ test("happy path: health → search → hold → paypal order → capture → po
   const confirmedSession = await bookingSessions.getById(bookingSessionId);
   expect(confirmedSession?.status).toBe("booking_confirmed");
   const confirmedHold = await holds.getByBookingSessionId(bookingSessionId);
-  expect(confirmedHold?.status).toBe("active");
+  // On capture the hold is moved to `converted` immediately (before the Smoobu
+  // promotion), taking it out of the expiry sweep's reach — see R1 / markHoldConfirmed.
+  expect(confirmedHold?.status).toBe("converted");
   const confirmedPayment = await payments.getByBookingSessionId(bookingSessionId);
   expect(confirmedPayment?.status).toBe("captured");
   expect(confirmedPayment?.paypalCaptureId).toBe("HP-CAP-001");

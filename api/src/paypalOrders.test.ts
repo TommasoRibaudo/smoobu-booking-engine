@@ -1,4 +1,5 @@
 import { createBookingApiHandler } from "./app";
+import { derivePaypalRequestId } from "./paypalOrders";
 import { InMemoryBookingSessionRepository } from "./bookingSessions";
 import { InMemoryHoldRepository } from "./holds";
 import { InMemoryPaymentRepository } from "./payments";
@@ -171,7 +172,7 @@ function makeHappyPathFetch(): jest.Mock {
 
 // ─── Event builders ───────────────────────────────────────────────────────────
 
-function makeSearchEvent(): LambdaHttpRequest {
+function makeSearchEvent(language: "en" | "es" = "en"): LambdaHttpRequest {
   return {
     version: "2.0",
     rawPath: "/api/search",
@@ -184,7 +185,7 @@ function makeSearchEvent(): LambdaHttpRequest {
       arrivalDate: "2099-06-10",
       departureDate: "2099-06-14",
       guests: 2,
-      language: "en",
+      language,
     }),
     requestContext: {
       http: { method: "POST", path: "/api/search", sourceIp: "203.0.113.30" },
@@ -293,8 +294,11 @@ function makeScopedCaptureEvent(
 const NONEXISTENT_SESSION_ID = "b8a1f2e7-0000-4000-8000-000000000000";
 
 /** Drives the full search → hold flow and returns the IDs needed for the PayPal steps. */
-async function setupSessionWithActiveHold(handler: ReturnType<typeof createBookingApiHandler>) {
-  const searchResp = await handler(makeSearchEvent());
+async function setupSessionWithActiveHold(
+  handler: ReturnType<typeof createBookingApiHandler>,
+  language: "en" | "es" = "en"
+) {
+  const searchResp = await handler(makeSearchEvent(language));
   expect(searchResp.statusCode).toBe(200);
   const searchBody = JSON.parse(searchResp.body);
   const { bookingSessionId, properties } = searchBody;
@@ -394,12 +398,14 @@ test("POST /api/paypal/order sends PayPal-Request-Id header and correct order pa
   expect(orderCall).toBeDefined();
   const orderInit = orderCall?.[1];
 
-  // PayPal-Request-Id must be set and be a UUID
+  // PayPal-Request-Id must be set and be a deterministic (sha256-hex) id derived
+  // from the Idempotency-Key + session, so a retried createOrder is deduped by
+  // PayPal rather than creating a second order (R7).
   expect(orderInit?.headers).toMatchObject({
     Authorization: "Bearer pp-access-token",
   });
   const paypalRequestId = (orderInit?.headers as Record<string, string>)["PayPal-Request-Id"];
-  expect(paypalRequestId).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(paypalRequestId).toMatch(/^[0-9a-f]{64}$/i);
 
   // Order payload correctness
   const orderPayload = JSON.parse(orderInit?.body as string);
@@ -416,12 +422,61 @@ test("POST /api/paypal/order sends PayPal-Request-Id header and correct order pa
       locale: "en-US",
       shipping_preference: "NO_SHIPPING",
       user_action: "PAY_NOW",
-      return_url: "https://booking.test/book/return",
-      cancel_url: "https://booking.test/book",
+      return_url: "https://booking.test/en/book/return",
+      cancel_url: "https://booking.test/en/book",
     },
   });
   expect(orderPayload.purchase_units[0].description).toContain("Sunset Villa");
   expect(orderPayload.purchase_units[0].custom_id).toMatch(/^KWL-[A-Z2-9]{8}$/);
+});
+
+test("POST /api/paypal/order sends locale-prefixed return_url/cancel_url for a Spanish session", async () => {
+  // Regression test — the return/cancel URLs used to be built from the legacy
+  // "...ES"-suffixed scheme ("/bookES/return"), which isn't a route the SPA
+  // registers under the current locale-prefix routing (routes.manifest.json
+  // registers "book/return" under the "/es" prefix, not a "/bookES" path).
+  // That 404'd every Spanish guest returning from PayPal. English sessions
+  // had the same class of bug for a different reason — see the sibling test
+  // below.
+  const fetchFn = makeHappyPathFetch();
+  global.fetch = fetchFn as typeof fetch;
+  const handler = createBookingApiHandler(config);
+  const { bookingSessionId } = await setupSessionWithActiveHold(handler, "es");
+
+  await handler(makeOrderEvent({ bookingSessionId }));
+
+  const orderCall = fetchFn.mock.calls.find(([url]) =>
+    new URL(url.toString()).pathname === "/v2/checkout/orders"
+  );
+  const orderPayload = JSON.parse(orderCall?.[1]?.body as string);
+  expect(orderPayload.application_context).toMatchObject({
+    return_url: "https://booking.test/es/book/return",
+    cancel_url: "https://booking.test/es/book",
+  });
+});
+
+test("POST /api/paypal/order sends locale-prefixed return_url/cancel_url for an English session", async () => {
+  // Regression test — the return/cancel URLs used to be built as a bare
+  // "/book" path with no locale prefix. src/Router/Router.tsx only bare-roots
+  // the "home" route for English (see pathForKey() in src/routes.config.ts);
+  // every other route, "book" included, is only registered at "/en/book".
+  // Unlike prerendered listing pages, there's no legacy redirect covering a
+  // bare "/book", so that 404'd every English guest returning from PayPal.
+  const fetchFn = makeHappyPathFetch();
+  global.fetch = fetchFn as typeof fetch;
+  const handler = createBookingApiHandler(config);
+  const { bookingSessionId } = await setupSessionWithActiveHold(handler, "en");
+
+  await handler(makeOrderEvent({ bookingSessionId }));
+
+  const orderCall = fetchFn.mock.calls.find(([url]) =>
+    new URL(url.toString()).pathname === "/v2/checkout/orders"
+  );
+  const orderPayload = JSON.parse(orderCall?.[1]?.body as string);
+  expect(orderPayload.application_context).toMatchObject({
+    return_url: "https://booking.test/en/book/return",
+    cancel_url: "https://booking.test/en/book",
+  });
 });
 
 test("POST /api/paypal/order advances session status to paypal_order_created", async () => {
@@ -438,10 +493,60 @@ test("POST /api/paypal/order advances session status to paypal_order_created", a
   const payment = await payments.getByBookingSessionId(bookingSessionId);
   expect(payment?.status).toBe("order_created");
   expect(payment?.paypalOrderId).toBe("PAY-ORDER-123");
-  expect(payment?.paypalRequestIdOrder).toMatch(/^[0-9a-f-]{36}$/i);
-  expect(payment?.paypalRequestIdCapture).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(payment?.paypalRequestIdOrder).toMatch(/^[0-9a-f]{64}$/i);
+  expect(payment?.paypalRequestIdCapture).toMatch(/^[0-9a-f]{64}$/i);
   // The two request IDs must be different
   expect(payment?.paypalRequestIdOrder).not.toBe(payment?.paypalRequestIdCapture);
+});
+
+test("POST /api/paypal/order returns 503 (not a blind 502) with the real reason when PayPal rejects order creation", async () => {
+  // Regression test — createOrder used to have no explicit 422 handling, so any
+  // PayPal rejection here (bad payload, restricted merchant account, unsupported
+  // currency) fell into buildPayPalHttpError's generic fallback: a 502 "PayPal
+  // rejected the request" that discarded PayPal's actual issue/description. A
+  // guest with an active hold would see a bare 502 and have no way to retry or
+  // recover, and the state-transition log gave engineers nothing to diagnose from.
+  const fetchFn = jest.fn(async (url: string | URL) => {
+    const { hostname, pathname } = new URL(url.toString());
+
+    if (hostname === "login.smoobu.com") {
+      if (pathname === "/booking/checkApartmentAvailability") return jsonResp(SMOOBU_AVAILABILITY_RESPONSE);
+      if (pathname === "/api/reservations") return jsonResp(SMOOBU_RESERVATION_RESPONSE);
+    }
+
+    if (hostname === "api-m.sandbox.paypal.com") {
+      if (pathname === "/v1/oauth2/token") return jsonResp(PAYPAL_TOKEN_RESPONSE);
+      if (pathname === "/v2/checkout/orders") {
+        return jsonResp(
+          {
+            name: "UNPROCESSABLE_ENTITY",
+            details: [
+              { issue: "PAYEE_ACCOUNT_RESTRICTED", description: "Payee account is restricted." },
+            ],
+          },
+          { status: 422 }
+        );
+      }
+    }
+
+    return jsonResp({ detail: "unexpected" }, { status: 500 });
+  });
+  global.fetch = fetchFn as typeof fetch;
+  const handler = createBookingApiHandler(config);
+  const { bookingSessionId } = await setupSessionWithActiveHold(handler);
+
+  const response = await handler(makeOrderEvent({ bookingSessionId }));
+
+  expect(response.statusCode).toBe(503);
+  const body = JSON.parse(response.body);
+  expect(body.error.code).toBe("paypal_account_restricted");
+
+  // No payment row was created, and the session is still hold_active — the
+  // guest can retry (e.g. with bank transfer) without losing their hold.
+  const payment = await payments.getByBookingSessionId(bookingSessionId);
+  const session = await bookingSessions.getById(bookingSessionId);
+  expect(payment).toBeUndefined();
+  expect(session?.status).toBe("hold_active");
 });
 
 test("POST /api/paypal/order is idempotent: second call returns the same orderId without re-calling PayPal", async () => {
@@ -814,4 +919,60 @@ test("POST /api/paypal/capture requires Idempotency-Key header", async () => {
   expect(response.statusCode).toBe(400);
   const body = JSON.parse(response.body);
   expect(body.error.code).toBe("missing_idempotency_key");
+});
+
+// ─── Race-condition regression tests ────────────────────────────────────────
+
+test("R3: capture returns 200 (not 500) when the session was confirmed by a concurrent actor", async () => {
+  global.fetch = makeHappyPathFetch() as typeof fetch;
+  const handler = createBookingApiHandler(config);
+  const { bookingSessionId } = await setupSessionWithActiveHold(handler);
+
+  await handler(makeOrderEvent({ bookingSessionId }));
+
+  // Simulate a racing PayPal webhook / reconciliation that confirms the session
+  // *between* the capture handler's session read and its markBookingConfirmed:
+  // the real transition succeeds (session → booking_confirmed) and then the
+  // capture endpoint's own CAS finds 0 rows and throws. R3 must swallow that and
+  // return the confirmed booking rather than a 500.
+  const realMarkConfirmed = bookingSessions.markBookingConfirmed.bind(bookingSessions);
+  jest
+    .spyOn(bookingSessions, "markBookingConfirmed")
+    .mockImplementationOnce(async (input) => {
+      await realMarkConfirmed(input);
+      throw new Error(
+        `Cannot transition booking session ${input.bookingSessionId} to booking_confirmed: expected paypal_order_created, got booking_confirmed.`
+      );
+    });
+
+  const captureResp = await handler(
+    makeCaptureEvent({ bookingSessionId, paypalOrderId: "PAY-ORDER-123" })
+  );
+
+  expect(captureResp.statusCode).toBe(200);
+  const body = JSON.parse(captureResp.body);
+  expect(body.booking.status).toBe("booking_confirmed");
+
+  const session = await bookingSessions.getById(bookingSessionId);
+  expect(session?.status).toBe("booking_confirmed");
+});
+
+test("R7: PayPal-Request-Id is deterministic per (idempotency key, session, phase)", () => {
+  const a = derivePaypalRequestId("idem-key-1", "session-1", "order");
+  const b = derivePaypalRequestId("idem-key-1", "session-1", "order");
+  // Stable across retries → PayPal dedupes a retried createOrder.
+  expect(a).toBe(b);
+
+  // Order and capture phases differ.
+  expect(derivePaypalRequestId("idem-key-1", "session-1", "order")).not.toBe(
+    derivePaypalRequestId("idem-key-1", "session-1", "capture")
+  );
+  // Different sessions differ even with a reused idempotency key.
+  expect(derivePaypalRequestId("idem-key-1", "session-1", "order")).not.toBe(
+    derivePaypalRequestId("idem-key-1", "session-2", "order")
+  );
+  // Different keys differ.
+  expect(derivePaypalRequestId("idem-key-1", "session-1", "order")).not.toBe(
+    derivePaypalRequestId("idem-key-2", "session-1", "order")
+  );
 });

@@ -87,6 +87,19 @@ async function processOneHold(
 ): Promise<void> {
   const { holds, bookingSessions, smoobuClient, logger } = deps;
 
+  // 0. Never expire — and never cancel the Smoobu reservation of — a booking that
+  // has already been confirmed/paid. The RDS `listExpiredHolds` already excludes
+  // these via a join, but the in-memory repo cannot, and a confirmation may have
+  // landed between the sweep's claim and now. The session status is authoritative.
+  const guardSession = await bookingSessions.getById(hold.bookingSessionId).catch(() => undefined);
+  if (guardSession?.status === "booking_confirmed") {
+    logger.info("hold_expiry_skipped_confirmed", {
+      holdId: hold.id,
+      bookingSessionId: hold.bookingSessionId,
+    });
+    return;
+  }
+
   // 1. Mark hold as expired in DB
   try {
     await holds.expireHold(hold.id);

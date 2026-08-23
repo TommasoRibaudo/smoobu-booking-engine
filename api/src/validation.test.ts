@@ -556,3 +556,14 @@ test("validateDepositHoldRequest: carries tracking through the deposit checkout"
 
   expect(result.tracking).toEqual({ gaClientId: "abc.def" });
 });
+
+test("validateDepositHoldRequest: honours the non-refundable rate on the deposit path (#307)", () => {
+  const { paymentMethod: _paymentMethod, ...depositBody } = validHold;
+
+  // A guest who picked the non-refundable rate keeps it when paying by SINPE;
+  // previously the deposit path forced flexible and silently dropped the choice.
+  expect(validateDepositHoldRequest({ ...depositBody, nonRefundable: true }).nonRefundable).toBe(true);
+  // Default and unset stay flexible.
+  expect(validateDepositHoldRequest(depositBody).nonRefundable).toBe(false);
+  expect(validateDepositHoldRequest({ ...depositBody, nonRefundable: false }).nonRefundable).toBe(false);
+});

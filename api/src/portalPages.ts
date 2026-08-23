@@ -98,6 +98,20 @@ export async function handlePortalHelpRequest(
     bookingSessionId: session.id,
   });
 
+  // Non-fatal: a mail failure must not report back to the guest as an error —
+  // the request was still received and logged above.
+  try {
+    const property = BOOKING_PROPERTIES_BY_ID.get(session.propertyId ?? "");
+    const propertyName = property?.name ?? session.propertyId ?? "";
+    const emailClient = createEmailClient(config.email, request.observability.logger);
+    await emailClient.sendStaffHelpRequest(session, propertyName, { type: body.type, message: body.message });
+  } catch (emailError) {
+    request.observability.logger.error("portal_help_request_email_failed", {
+      bookingSessionId: session.id,
+      error: emailError instanceof Error ? emailError.message : String(emailError),
+    });
+  }
+
   const strings = portalStrings[session.language];
   return jsonResponse(
     200,
@@ -151,6 +165,23 @@ export async function handlePortalCancellationRequest(
     route: "/api/portal/reservation/:reservationPublicId/cancellation-request",
     bookingSessionId: session.id,
   });
+
+  // Non-fatal: a mail failure must not report back to the guest as an error —
+  // the request was still received and logged above.
+  try {
+    const property = BOOKING_PROPERTIES_BY_ID.get(session.propertyId ?? "");
+    const propertyName = property?.name ?? session.propertyId ?? "";
+    const emailClient = createEmailClient(config.email, request.observability.logger);
+    await emailClient.sendStaffCancellationRequest(session, propertyName, {
+      reason: body.reason,
+      message: body.message,
+    });
+  } catch (emailError) {
+    request.observability.logger.error("portal_cancellation_request_email_failed", {
+      bookingSessionId: session.id,
+      error: emailError instanceof Error ? emailError.message : String(emailError),
+    });
+  }
 
   const strings = portalStrings[session.language];
   return jsonResponse(

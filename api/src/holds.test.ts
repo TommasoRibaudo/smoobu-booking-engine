@@ -365,7 +365,7 @@ test("RdsHoldRepository.listExpiredHolds atomically claims rows with skip-locked
 
   expect(records).toHaveLength(1);
   expect(records[0]).toMatchObject({ status: "expired", smoobuReservationId: 987654 });
-  expect(query).toHaveBeenCalledWith(expect.stringContaining("for update skip locked"), [
+  expect(query).toHaveBeenCalledWith(expect.stringContaining("for update of h skip locked"), [
     "2026-04-15T19:01:00.000Z",
   ]);
   expect(query).toHaveBeenCalledWith(expect.stringContaining("update holds"), [
@@ -981,6 +981,58 @@ test("POST /api/holds records a pet on the booking and on the Smoobu notice", as
 
   const storedSession = await bookingSessions.getById(searchBody.bookingSessionId);
   expect(storedSession).toMatchObject({ status: "hold_active", hasPet: true });
+});
+
+test("POST /api/holds applies the non-refundable discount via #norefundallowed and records it on the reservation (#307)", async () => {
+  const fetchFn = jest.fn(async (url: string | URL, init?: RequestInit) => {
+    const pathname = new URL(url.toString()).pathname;
+    if (pathname === "/booking/checkApartmentAvailability") {
+      // The #norefundallowed code is what actually discounts the rate; Smoobu
+      // returns 10% off (510 -> 459) only when it is present on the re-quote.
+      const reqBody = init?.body ? JSON.parse(init.body as string) : {};
+      const price = reqBody.discountCode === "#norefundallowed" ? 459 : 510;
+      return jsonResponse({
+        availableApartments: [100001],
+        prices: { "100001": { price, currency: "USD" } },
+        errorMessages: {},
+      });
+    }
+    if (pathname === "/api/reservations") {
+      return jsonResponse({ id: 987654 });
+    }
+    return jsonResponse({ detail: "unexpected" }, { status: 500 });
+  });
+  global.fetch = fetchFn as typeof fetch;
+  const handler = createBookingApiHandler(config);
+
+  const searchBody = JSON.parse((await handler(makeSearchEvent())).body);
+  const response = await handler(
+    makeHoldEvent({
+      quoteId: searchBody.quoteId,
+      bookingSessionId: searchBody.bookingSessionId,
+      propertyId: searchBody.properties[0].propertyId,
+      paymentMethod: "paypal",
+      guest: { firstName: "Ana", lastName: "Mora", email: "ana@example.com" },
+      portalPassword: "correct horse battery staple",
+      termsAccepted: true,
+      nonRefundable: true,
+    })
+  );
+
+  expect(response.statusCode).toBe(200);
+
+  // The hold re-quote carried the discount code...
+  const [, recheckInit] = fetchFn.mock.calls[1];
+  expect(JSON.parse(recheckInit?.body as string).discountCode).toBe("#norefundallowed");
+
+  // ...the reservation Smoobu records the discounted price and says why.
+  const [, reservationInit] = fetchFn.mock.calls[2];
+  const reservationPayload = JSON.parse(reservationInit?.body as string);
+  expect(reservationPayload.price).toBe(459);
+  expect(reservationPayload.notice).toContain("Non-refundable rate (#norefundallowed)");
+
+  // ...and the charged total on the booking is the discounted one.
+  expect(JSON.parse(response.body).booking.price.totalAmountCents).toBe(45900);
 });
 
 test("POST /api/holds rejects a pet on a home that does not accept pets", async () => {

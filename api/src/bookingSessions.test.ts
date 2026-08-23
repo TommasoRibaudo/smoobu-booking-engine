@@ -1,4 +1,8 @@
-import { BookingSessionQuotedProperty, RdsBookingSessionRepository } from "./bookingSessions";
+import {
+  BookingSessionQuotedProperty,
+  InMemoryBookingSessionRepository,
+  RdsBookingSessionRepository,
+} from "./bookingSessions";
 
 const QUOTED_PROPERTIES: BookingSessionQuotedProperty[] = [
   {
@@ -425,4 +429,69 @@ test("RdsBookingSessionRepository.throwMissingOrInvalidTransition throws not-fou
   await expect(
     repo.markPaypalOrderCreated({ bookingSessionId: BASE_ROW.id, paypalOrderId: "PAYPAL-ORDER-X" })
   ).rejects.toThrow(`Booking session ${BASE_ROW.id} was not found.`);
+});
+
+// ─── Race-condition regression: staff deposit reject guard (R6) ───────────────
+
+describe("markStaffRejected (R6)", () => {
+  async function seedManualDepositHoldActive(sessions: InMemoryBookingSessionRepository) {
+    const session = await sessions.createQuotedSession({
+      arrivalDate: "2026-05-01",
+      departureDate: "2026-05-05",
+      guests: 2,
+      language: "en",
+      quotedProperties: QUOTED_PROPERTIES,
+    });
+    const propertyId = QUOTED_PROPERTIES[0].propertyId;
+    await sessions.markHoldCreating({
+      bookingSessionId: session.id,
+      propertyId,
+      paymentMethod: "manual_deposit",
+      ratePlan: "flexible",
+      price: QUOTED_PROPERTIES[0],
+      guest: { firstName: "Test", lastName: "Guest", email: "test@example.com" },
+      portalPasswordHash: "hash",
+      expiresAt: "2026-04-18T13:00:00.000Z",
+    });
+    await sessions.markHoldActive({ bookingSessionId: session.id, expiresAt: "2026-04-18T13:00:00.000Z" });
+    return session;
+  }
+
+  it("cancels a hold_active manual-deposit booking", async () => {
+    const sessions = new InMemoryBookingSessionRepository();
+    const session = await seedManualDepositHoldActive(sessions);
+
+    const rejected = await sessions.markStaffRejected({
+      bookingSessionId: session.id,
+      reason: "deposit_not_received",
+      cancelledAt: "2026-04-16T10:00:00.000Z",
+    });
+
+    expect(rejected).toBeDefined();
+    expect(rejected?.status).toBe("cancelled");
+  });
+
+  it("returns undefined (and does NOT cancel) once the booking has been confirmed", async () => {
+    const sessions = new InMemoryBookingSessionRepository();
+    const session = await seedManualDepositHoldActive(sessions);
+
+    // A concurrent staff confirm lands first.
+    await sessions.markDepositConfirmed({
+      bookingSessionId: session.id,
+      confirmedAt: "2026-04-16T09:59:00.000Z",
+      confirmedBy: "staff_link",
+      tokenJti: "jti-1",
+    });
+
+    const rejected = await sessions.markStaffRejected({
+      bookingSessionId: session.id,
+      reason: "deposit_not_received",
+      cancelledAt: "2026-04-16T10:00:00.000Z",
+    });
+
+    // Guard refuses the transition — the caller must skip the Smoobu cancel.
+    expect(rejected).toBeUndefined();
+    const after = await sessions.getById(session.id);
+    expect(after?.status).toBe("booking_confirmed");
+  });
 });

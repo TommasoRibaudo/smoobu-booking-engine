@@ -54,6 +54,10 @@ export interface EmailTemplateInput {
   contactWhatsApp?: string;
   /** Override default contact email address (falls back to config/env default) */
   contactEmail?: string;
+  /** Free-text guest message — portal help/cancellation requests. HTML-escaped by the renderer, not the caller. */
+  guestMessage?: string;
+  /** Optional category the guest picked for a help request (e.g. "general", "maintenance"). */
+  helpRequestType?: string;
 }
 
 export interface RenderedEmail {
@@ -159,6 +163,21 @@ const strings = {
       noRefundAction: "No refund is due. The guest cancelled inside the 24-hour window.",
       guestContact: "Guest contact",
     },
+    staffHelpRequest: {
+      subject: (id: string) => `Help request: ${id}`,
+      intro: "A guest sent a message through their booking portal.",
+      typeLabel: "Type",
+      messageLabel: "Message",
+      guestContact: "Guest contact",
+    },
+    staffCancellationRequest: {
+      subject: (id: string) => `[ACTION] Cancellation request: ${id}`,
+      intro: "A guest asked to cancel their confirmed booking through the portal. This is a request, not a self-service cancellation — the booking is still active and Smoobu has not been touched.",
+      reasonLabel: "Reason",
+      messageLabel: "Message",
+      guestContact: "Guest contact",
+      action: "Follow up with the guest and process the cancellation by hand if appropriate.",
+    },
   },
   es: {
     greeting: (name: string) => `Hola ${name},`,
@@ -254,10 +273,40 @@ const strings = {
       noRefundAction: "No corresponde reembolso. El huésped canceló dentro de la ventana de 24 horas.",
       guestContact: "Contacto del huésped",
     },
+    staffHelpRequest: {
+      subject: (id: string) => `Solicitud de ayuda: ${id}`,
+      intro: "Un huésped envió un mensaje desde el portal de su reserva.",
+      typeLabel: "Tipo",
+      messageLabel: "Mensaje",
+      guestContact: "Contacto del huésped",
+    },
+    staffCancellationRequest: {
+      subject: (id: string) => `[ACCIÓN] Solicitud de cancelación: ${id}`,
+      intro: "Un huésped solicitó cancelar su reserva confirmada desde el portal. Esto es una solicitud, no una cancelación automática — la reserva sigue activa y no se ha tocado Smoobu.",
+      reasonLabel: "Motivo",
+      messageLabel: "Mensaje",
+      guestContact: "Contacto del huésped",
+      action: "Da seguimiento al huésped y procesa la cancelación manualmente si corresponde.",
+    },
   },
 } as const;
 
 // ─── Shared layout ────────────────────────────────────────────────────────────
+
+/**
+ * Escapes free-text guest input before it goes into an HTML email body.
+ * Every other field these templates interpolate is bounded/structured (IDs,
+ * dates, amounts); the portal help/cancellation message is arbitrary text a
+ * guest typed, so it's the one field here that genuinely needs this.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function formatAmount(cents: number, currency: string): string {
   return `${currency} ${(cents / 100).toFixed(2)}`;
@@ -748,6 +797,93 @@ ${detailsTable(rows)}
   );
 
   const text = [t.intro, "", detailsText(rows), "", actionCopy, "", s.footer].join("\n");
+
+  return { subject: t.subject(input.reservationPublicId), html, text };
+}
+
+// ─── Template: staff_help_request ────────────────────────────────────────────
+
+/**
+ * Sent to STAFF_NOTIFICATION_EMAIL — forwards a guest's portal help-request
+ * message. `guestMessage` is free text a guest typed, unlike every other
+ * field in this template, so it's the one HTML-escaped before interpolation.
+ */
+export function renderStaffHelpRequestEmail(input: EmailTemplateInput): RenderedEmail {
+  const s = strings[input.language];
+  const t = s.staffHelpRequest;
+
+  const rows: Array<[string, string]> = [
+    [s.reservationId, input.reservationPublicId],
+    [s.property, input.propertyName],
+    [s.arrival, formatDate(input.arrivalDate)],
+    [s.departure, formatDate(input.departureDate)],
+    ...(input.helpRequestType ? ([[t.typeLabel, input.helpRequestType]] as Array<[string, string]>) : []),
+    [t.guestContact, `${escapeHtml(input.guestFirstName)} · ${escapeHtml(input.guestEmail)}`],
+  ];
+
+  const message = input.guestMessage ?? "";
+
+  const html = layout(
+    `<p>${t.intro}</p>
+${detailsTable(rows)}
+<p style="color:#555;margin-bottom:4px">${t.messageLabel}</p>
+<p style="white-space:pre-wrap;background:#f5f5f5;border-radius:6px;padding:12px 16px;margin:0">${escapeHtml(message)}</p>`,
+    s.footer,
+    input.language
+  );
+
+  const text = [t.intro, "", detailsText(rows), "", `${t.messageLabel}:`, message, "", s.footer].join("\n");
+
+  return { subject: t.subject(input.reservationPublicId), html, text };
+}
+
+// ─── Template: staff_cancellation_request ────────────────────────────────────
+
+/**
+ * Sent to STAFF_NOTIFICATION_EMAIL when a guest asks (via the portal) to
+ * cancel a confirmed booking. This is the *request* — nothing is cancelled
+ * automatically; staff follow up and, if appropriate, process it by hand
+ * (see renderStaffCancellationEmail for the actual-cancellation alert).
+ */
+export function renderStaffCancellationRequestEmail(input: EmailTemplateInput): RenderedEmail {
+  const s = strings[input.language];
+  const t = s.staffCancellationRequest;
+
+  const rows: Array<[string, string]> = [
+    [s.reservationId, input.reservationPublicId],
+    [s.property, input.propertyName],
+    [s.arrival, formatDate(input.arrivalDate)],
+    [s.departure, formatDate(input.departureDate)],
+    ...(input.cancellationReason ? ([[t.reasonLabel, input.cancellationReason]] as Array<[string, string]>) : []),
+    [t.guestContact, `${escapeHtml(input.guestFirstName)} · ${escapeHtml(input.guestEmail)}`],
+  ];
+
+  const message = input.guestMessage ?? "";
+
+  const html = layout(
+    `<p>${t.intro}</p>
+${detailsTable(rows)}
+${
+  message
+    ? `<p style="color:#555;margin-bottom:4px">${t.messageLabel}</p>
+<p style="white-space:pre-wrap;background:#f5f5f5;border-radius:6px;padding:12px 16px;margin:0 0 16px">${escapeHtml(message)}</p>`
+    : ""
+}
+<p style="color:#294F44;font-weight:600">${t.action}</p>`,
+    s.footer,
+    input.language
+  );
+
+  const text = [
+    t.intro,
+    "",
+    detailsText(rows),
+    ...(message ? ["", `${t.messageLabel}:`, message] : []),
+    "",
+    t.action,
+    "",
+    s.footer,
+  ].join("\n");
 
   return { subject: t.subject(input.reservationPublicId), html, text };
 }

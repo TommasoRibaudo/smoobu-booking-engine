@@ -185,6 +185,18 @@ export interface BookingSessionRepository {
     confirmedBy: string;
     tokenJti: string;
   }): Promise<BookingSessionRecord>;
+  /**
+   * Staff rejecting a manual-deposit booking whose transfer never arrived. Unlike
+   * markCancelled (whose guard admits booking_confirmed, for guest cancellations),
+   * this only fires from hold_active — so it can never cancel a booking that was
+   * confirmed concurrently. Returns `undefined` on 0 rows: the caller must treat
+   * that as "no longer rejectable" and NOT perform the Smoobu cancellation (R6).
+   */
+  markStaffRejected(input: {
+    bookingSessionId: string;
+    reason: string;
+    cancelledAt: string;
+  }): Promise<BookingSessionRecord | undefined>;
   setDepositReceiptS3Key(input: { bookingSessionId: string; s3Key: string }): Promise<BookingSessionRecord>;
   updateGuests(input: { bookingSessionId: string; guests: number }): Promise<BookingSessionRecord>;
   listByStatus?(status: BookingSessionStatus): Promise<BookingSessionRecord[]>;
@@ -678,6 +690,31 @@ export class RdsBookingSessionRepository implements BookingSessionRepository {
     return this.throwMissingOrInvalidTransition(input.bookingSessionId, "booking_confirmed", "cancelled");
   }
 
+  async markStaffRejected(input: {
+    bookingSessionId: string;
+    reason: string;
+    cancelledAt: string;
+  }): Promise<BookingSessionRecord | undefined> {
+    const result = await this.pool.query<BookingSessionRow>(
+      `
+        update booking_sessions
+        set
+          status = 'cancelled',
+          cancelled_at = coalesce(cancelled_at, $3),
+          cancellation_reason = coalesce(cancellation_reason, $2),
+          cancelled_by = coalesce(cancelled_by, 'staff'),
+          updated_at = now()
+        where id = $1
+          and status = 'hold_active'
+          and payment_method = 'manual_deposit'
+        returning ${BOOKING_SESSION_COLUMNS}
+      `,
+      [input.bookingSessionId, input.reason, input.cancelledAt]
+    );
+
+    return result.rows[0] ? mapBookingSessionRow(result.rows[0]) : undefined;
+  }
+
   async setDepositReceiptS3Key(input: { bookingSessionId: string; s3Key: string }): Promise<BookingSessionRecord> {
     const result = await this.pool.query<BookingSessionRow>(
       `
@@ -955,6 +992,26 @@ export class InMemoryBookingSessionRepository implements BookingSessionRepositor
       cancelledAt: existing.cancelledAt ?? input.cancelledAt,
       cancellationReason: existing.cancellationReason ?? input.reason,
       cancelledBy: existing.cancelledBy ?? input.cancelledBy,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async markStaffRejected(input: {
+    bookingSessionId: string;
+    reason: string;
+    cancelledAt: string;
+  }): Promise<BookingSessionRecord | undefined> {
+    const existing = this.sessionsById.get(input.bookingSessionId);
+    if (!existing || existing.status !== "hold_active" || existing.paymentMethod !== "manual_deposit") {
+      return undefined;
+    }
+
+    return this.save({
+      ...existing,
+      status: "cancelled",
+      cancelledAt: existing.cancelledAt ?? input.cancelledAt,
+      cancellationReason: existing.cancellationReason ?? input.reason,
+      cancelledBy: existing.cancelledBy ?? "staff",
       updatedAt: new Date().toISOString(),
     });
   }

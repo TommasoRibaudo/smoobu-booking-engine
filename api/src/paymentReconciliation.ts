@@ -76,16 +76,21 @@ export async function reconcilePendingPayments(
   const pendingPayments = await payments.listByStatus("order_created");
   result.processed = pendingPayments.length;
 
-  if (pendingPayments.length === 0) {
+  if (pendingPayments.length > 0) {
+    logger.info("payment_reconciliation_started", { count: pendingPayments.length, now });
+    for (const payment of pendingPayments) {
+      await reconcileOnePayment(payment, deps, result, now, staleThresholdMs);
+    }
+  } else {
     logger.debug("payment_reconciliation_empty", { now });
-    return result;
   }
 
-  logger.info("payment_reconciliation_started", { count: pendingPayments.length, now });
-
-  for (const payment of pendingPayments) {
-    await reconcileOnePayment(payment, deps, result, now, staleThresholdMs);
-  }
+  // Recover sessions stranded mid-confirm (R9): the payment was captured but the
+  // session never advanced to booking_confirmed — a crash between markCaptured and
+  // markBookingConfirmed in the capture endpoint or webhook. The main scan above
+  // filters on *payment* status ('order_created') and can never re-pick these,
+  // since their payment already reads 'captured'.
+  await recoverStrandedConfirmations(deps, result, now);
 
   logger.info("payment_reconciliation_completed", {
     processed: result.processed,
@@ -237,6 +242,36 @@ async function confirmFromReconciliation(
       errorCode: "db_update_failed",
       message: errMsg,
     });
+  }
+}
+
+/**
+ * Confirms sessions that were left in `paypal_order_created` even though their
+ * payment already reached `captured` — a crash between markCaptured and
+ * markBookingConfirmed. Enumerating by *session* status keeps the candidate set
+ * small and current (only genuinely pending sessions), and confirmFromReconciliation
+ * re-uses the idempotent markCaptured + CAS markBookingConfirmed path.
+ */
+async function recoverStrandedConfirmations(
+  deps: ReconciliationDependencies,
+  result: ReconciliationResult,
+  now: string
+): Promise<void> {
+  const { payments, bookingSessions, logger } = deps;
+  if (!bookingSessions.listByStatus) {
+    return;
+  }
+
+  const strandedSessions = await bookingSessions.listByStatus("paypal_order_created");
+  for (const session of strandedSessions) {
+    const payment = await payments.getByBookingSessionId(session.id);
+    if (payment?.status === "captured" && payment.paypalCaptureId) {
+      logger.warn("payment_reconciliation_recovering_stranded_confirm", {
+        bookingSessionId: session.id,
+        paypalCaptureId: payment.paypalCaptureId,
+      });
+      await confirmFromReconciliation(payment, payment.paypalCaptureId, now, deps, result);
+    }
   }
 }
 

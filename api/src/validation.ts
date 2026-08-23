@@ -188,10 +188,10 @@ export function validateHoldRequest(value: unknown): HoldRequest {
 }
 
 /**
- * Deposit holds take the same shape as PayPal holds minus the payment method and
- * rate options: the deposit path is always the flexible rate, and the discount
- * code is tied to immediate card capture. A pet travels with the guest whichever
- * way they pay, so `withPet` is accepted here too.
+ * Deposit holds take the same shape as PayPal holds minus the payment method.
+ * The rate options travel with the guest whichever way they pay: `withPet`, and
+ * `nonRefundable` — a guest who picks the non-refundable rate keeps its 10%
+ * discount when paying by SINPE/transfer, not only via PayPal (#307).
  */
 export function validateDepositHoldRequest(value: unknown): HoldRequest {
   const body = assertJsonObject(value);
@@ -222,7 +222,7 @@ export function validateDepositHoldRequest(value: unknown): HoldRequest {
     portalPassword,
     termsAccepted: true,
     marketingConsent: body.marketingConsent === true,
-    nonRefundable: false,
+    nonRefundable: body.nonRefundable === true,
     withPet: body.withPet === true,
     ...(parseTrackingIdentifiers(body.tracking) ? { tracking: parseTrackingIdentifiers(body.tracking) } : {}),
   };

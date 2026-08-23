@@ -1,7 +1,9 @@
 /**
  * Smoobu reservation promotion — converts a "Blocked channel" (channelId 11)
- * hold into a "Homepage" / website reservation (channelId 70) after PayPal
- * payment is captured.
+ * hold into a "Homepage" / website reservation (channelId 70) once a booking
+ * is confirmed, whether by PayPal capture (paypalOrders.ts) or by staff
+ * confirming a manual deposit (depositConfirm.ts). Both callers build their
+ * own `notice` text, since the wording differs by payment method.
  *
  * The Smoobu PUT /api/reservations endpoint does NOT support changing channelId,
  * so promotion requires deleting the old blocked reservation and creating a new
@@ -28,9 +30,9 @@ interface SmoobuCreateReservationResponse {
 export interface PromoteSmoobuReservationInput {
   session: BookingSessionRecord;
   hold: HoldRecord;
-  captureId: string;
+  /** Caller-built, since the wording differs by payment method (PayPal capture vs. staff-confirmed deposit). */
+  notice: string;
   amountCents: number;
-  confirmedAt: string;
 }
 
 export interface PromoteSmoobuReservationResult {
@@ -57,7 +59,7 @@ export async function promoteSmoobuReservation(
   config: BookingApiConfig,
   observability: RouteObservability
 ): Promise<PromoteSmoobuReservationResult> {
-  const { session, hold, captureId, amountCents, confirmedAt } = input;
+  const { session, hold, notice, amountCents } = input;
   const logger = observability.logger;
 
   if (!hold.smoobuReservationId) {
@@ -68,11 +70,29 @@ export async function promoteSmoobuReservation(
     return { promoted: false, error: "no_smoobu_reservation_id" };
   }
 
-  const property = BOOKING_PROPERTIES_BY_ID.get(session.propertyId ?? "");
+  // The apartment we promote onto MUST be the one the blocked hold already
+  // occupies (hold.propertyId) — never a re-derivation from the mutable
+  // session.propertyId. The hold's property is immutable, matches the reservation
+  // being replaced, and matches the property named in the staff email. Trusting
+  // session.propertyId here let a Palm Cottage deposit be sold onto Ocean Breeze
+  // when the session's property drifted during a multi-home booking. If the
+  // two disagree, promote correctly AND surface it for investigation.
+  if (session.propertyId && session.propertyId !== hold.propertyId) {
+    logger.error("smoobu_promotion_property_mismatch", {
+      bookingSessionId: session.id,
+      holdId: hold.id,
+      holdPropertyId: hold.propertyId,
+      sessionPropertyId: session.propertyId,
+      action: "manual_intervention_required",
+    });
+  }
+
+  const property = BOOKING_PROPERTIES_BY_ID.get(hold.propertyId);
   if (!property) {
     logger.warn("smoobu_promotion_skipped_no_property", {
       bookingSessionId: session.id,
-      propertyId: session.propertyId,
+      holdId: hold.id,
+      propertyId: hold.propertyId,
     });
     return { promoted: false, error: "property_not_found" };
   }
@@ -90,9 +110,7 @@ export async function promoteSmoobuReservation(
 
   // If the hold is already on the website channel, just update payment fields.
   if (hold.smoobuChannelId === WEBSITE_CHANNEL_ID) {
-    return updateExistingWebsiteBooking(
-      smoobuClient, hold, session, captureId, amountCents, confirmedAt, observability, logger
-    );
+    return updateExistingWebsiteBooking(smoobuClient, hold, session, notice, amountCents, observability, logger);
   }
 
   // Step 1: Delete the old blocked reservation
@@ -109,15 +127,13 @@ export async function promoteSmoobuReservation(
       error: err instanceof Error ? err.message : String(err),
     });
     // Fall back to just updating the existing reservation's payment fields
-    return fallbackUpdateReservation(
-      smoobuClient, hold, session, captureId, amountCents, confirmedAt, observability, logger
-    );
+    return fallbackUpdateReservation(smoobuClient, hold, session, notice, amountCents, observability, logger);
   }
 
   // Step 2: Create a new reservation on the Homepage (website) channel
   let newReservationId: number;
   try {
-    const payload = buildConfirmedReservationPayload(session, property, captureId, amountCents, confirmedAt);
+    const payload = buildConfirmedReservationPayload(session, property, notice, amountCents);
     const response = await smoobuClient.createReservation<SmoobuCreateReservationResponse>(payload, observability);
     newReservationId = parseSmoobuReservationId(response.data);
 
@@ -133,16 +149,13 @@ export async function promoteSmoobuReservation(
       oldSmoobuReservationId: hold.smoobuReservationId,
       error: err instanceof Error ? err.message : String(err),
     });
-    // The old reservation was deleted but the new one failed. This is a
-    // problem — the dates are now unblocked on Smoobu. Log as critical.
-    logger.error("smoobu_promotion_dates_unblocked", {
-      bookingSessionId: session.id,
-      arrivalDate: session.arrivalDate,
-      departureDate: session.departureDate,
-      propertyId: session.propertyId,
-      action: "manual_intervention_required",
-    });
-    return { promoted: false, error: "create_after_delete_failed" };
+    // The old blocked reservation was deleted but the website one failed — the
+    // dates would be back on sale for a booking that is already paid. Smoobu
+    // rejects creating a reservation over a still-existing block, so we can't
+    // create-before-delete; instead we compensate by re-blocking the dates so
+    // the inventory stays held. A later promotion retry can finish the move to
+    // the website channel (R2).
+    return reblockAfterCreateFailure(smoobuClient, holds, hold, session, property, notice, amountCents, observability, logger);
   }
 
   // Step 3: Update local hold to converted with new reservation ID
@@ -186,9 +199,8 @@ async function updateExistingWebsiteBooking(
   smoobuClient: SmoobuClient,
   hold: HoldRecord,
   session: BookingSessionRecord,
-  captureId: string,
+  notice: string,
   amountCents: number,
-  confirmedAt: string,
   observability: RouteObservability,
   logger: ObservabilityLogger
 ): Promise<PromoteSmoobuReservationResult> {
@@ -196,7 +208,7 @@ async function updateExistingWebsiteBooking(
     await smoobuClient.updateReservation(
       hold.smoobuReservationId!,
       {
-        notice: buildConfirmedNotice(session, captureId, confirmedAt),
+        notice,
         prepayment: amountCents / 100,
         prepaymentStatus: 1,
         priceStatus: 1,
@@ -226,9 +238,8 @@ async function fallbackUpdateReservation(
   smoobuClient: SmoobuClient,
   hold: HoldRecord,
   session: BookingSessionRecord,
-  captureId: string,
+  notice: string,
   amountCents: number,
-  confirmedAt: string,
   observability: RouteObservability,
   logger: ObservabilityLogger
 ): Promise<PromoteSmoobuReservationResult> {
@@ -236,7 +247,7 @@ async function fallbackUpdateReservation(
     await smoobuClient.updateReservation(
       hold.smoobuReservationId!,
       {
-        notice: buildConfirmedNotice(session, captureId, confirmedAt),
+        notice,
         prepayment: amountCents / 100,
         prepaymentStatus: 1,
         priceStatus: 1,
@@ -259,12 +270,71 @@ async function fallbackUpdateReservation(
   }
 }
 
+/**
+ * Compensating action when the website reservation could not be created after the
+ * old blocked reservation was already deleted. Re-creates a Blocked-channel
+ * reservation so the (paid) booking's dates are not put back on sale, and points
+ * the local hold at the restored reservation. If even this fails, logs a critical
+ * alert for manual intervention.
+ */
+const BLOCKED_CHANNEL_ID: SmoobuChannelId = 11;
+
+async function reblockAfterCreateFailure(
+  smoobuClient: SmoobuClient,
+  holds: HoldRepository,
+  hold: HoldRecord,
+  session: BookingSessionRecord,
+  property: BookingProperty,
+  notice: string,
+  amountCents: number,
+  observability: RouteObservability,
+  logger: ObservabilityLogger
+): Promise<PromoteSmoobuReservationResult> {
+  try {
+    const payload = {
+      ...buildConfirmedReservationPayload(session, property, `RE-BLOCKED after failed promotion. ${notice}`, amountCents),
+      channelId: BLOCKED_CHANNEL_ID,
+    };
+    const response = await smoobuClient.createReservation<SmoobuCreateReservationResponse>(payload, observability);
+    const reblockId = parseSmoobuReservationId(response.data);
+
+    // Point the hold at the restored reservation (still on the blocked channel) so
+    // it is not orphaned and a later promotion retry can pick it up.
+    await holds
+      .convertHold({ holdId: hold.id, newSmoobuReservationId: reblockId, newSmoobuChannelId: BLOCKED_CHANNEL_ID })
+      .catch((convertErr) => {
+        logger.warn("smoobu_promotion_reblock_hold_update_failed", {
+          bookingSessionId: session.id,
+          holdId: hold.id,
+          reblockId,
+          error: convertErr instanceof Error ? convertErr.message : String(convertErr),
+        });
+      });
+
+    logger.warn("smoobu_promotion_reblocked_after_create_failure", {
+      bookingSessionId: session.id,
+      oldSmoobuReservationId: hold.smoobuReservationId,
+      reblockId,
+    });
+    return { promoted: false, error: "create_after_delete_failed_reblocked", newSmoobuReservationId: reblockId };
+  } catch (reblockErr) {
+    logger.error("smoobu_promotion_dates_unblocked", {
+      bookingSessionId: session.id,
+      arrivalDate: session.arrivalDate,
+      departureDate: session.departureDate,
+      propertyId: session.propertyId,
+      error: reblockErr instanceof Error ? reblockErr.message : String(reblockErr),
+      action: "manual_intervention_required",
+    });
+    return { promoted: false, error: "create_after_delete_failed" };
+  }
+}
+
 function buildConfirmedReservationPayload(
   session: BookingSessionRecord,
   property: BookingProperty,
-  captureId: string,
-  amountCents: number,
-  confirmedAt: string
+  notice: string,
+  amountCents: number
 ) {
   const guest = session.guest;
   return {
@@ -277,7 +347,7 @@ function buildConfirmedReservationPayload(
     email: guest?.email ?? "",
     ...(guest?.phone ? { phone: guest.phone } : {}),
     ...(guest?.country ? { country: guest.country } : {}),
-    notice: buildConfirmedNotice(session, captureId, confirmedAt),
+    notice,
     adults: session.guests,
     children: 0,
     price: amountCents / 100,
@@ -288,19 +358,6 @@ function buildConfirmedReservationPayload(
     depositStatus: 0,
     language: session.language,
   };
-}
-
-function buildConfirmedNotice(
-  session: BookingSessionRecord,
-  captureId: string,
-  confirmedAt: string
-): string {
-  return [
-    `Confirmed — PayPal payment received.`,
-    `Reservation ID: ${session.reservationPublicId}`,
-    `PayPal capture: ${captureId}`,
-    `Confirmed at: ${confirmedAt}`,
-  ].join("\n");
 }
 
 function parseSmoobuReservationId(data: SmoobuCreateReservationResponse): number {
