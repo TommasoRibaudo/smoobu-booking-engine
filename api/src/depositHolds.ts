@@ -38,14 +38,17 @@ export async function handleCreateDepositHold(
   return createSmoobuBackedHold(
     {
       paymentMethod: "manual_deposit",
-      // Deposit bookings are always on the flexible rate. The non-refundable
-      // discount is tied to immediate PayPal capture.
-      ratePlan: "flexible",
+      // Deposit bookings honour whichever rate the guest picked — flexible by
+      // default, or the non-refundable rate (10% off via the #norefundallowed
+      // re-quote) when selected. Previously the deposit path forced flexible, so
+      // a guest who chose non-refundable and paid by SINPE silently lost the
+      // discount they were shown (#307).
+      ratePlan: holdRequest.nonRefundable ? "non_refundable" : "flexible",
       idempotencyScope: DEPOSIT_HOLD_IDEMPOTENCY_SCOPE,
       ttlMsFor: (session) => depositHoldTtlMs(deposit.holdTtlHours, session.arrivalDate),
       noticePrefix: `${SITE_NAME} manual deposit hold.`,
       noticeCaveat: "Awaiting bank transfer / SINPE. Not confirmed until staff verify the deposit.",
-      allowNonRefundable: false,
+      allowNonRefundable: true,
       async finalize({ session, property, config: cfg, request: req }) {
         const { portalSessionSecret } = await cfg.secrets.getSecrets();
 

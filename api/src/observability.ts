@@ -81,6 +81,7 @@ export function createObservability(
       clientIpHash: hashLogValue(observation.clientIp),
       userAgentHash: hashLogValue(observation.userAgent),
       errorCode,
+      errorDetail: getErrorDetail(observation.error),
       retryable: isRetryableError(observation.error),
     };
 
@@ -149,6 +150,7 @@ export function createObservability(
       rateLimitRemaining: observation.rateLimitRemaining,
       rateLimitResetSeconds: observation.rateLimitResetSeconds,
       errorCode: observation.errorCode,
+      errorDetail: observation.errorDetail,
     });
 
     const metricValues: Record<string, number> = {
@@ -379,6 +381,16 @@ function getErrorCode(error: unknown): string | undefined {
   }
   if (error) {
     return "internal_error";
+  }
+  return undefined;
+}
+
+// Duck-typed rather than importing PayPalProviderError, to keep this
+// generic observability module from depending on a specific provider client.
+function getErrorDetail(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "providerDetail" in error) {
+    const detail = (error as { providerDetail?: unknown }).providerDetail;
+    return typeof detail === "string" ? detail : undefined;
   }
   return undefined;
 }

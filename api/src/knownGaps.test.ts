@@ -112,7 +112,7 @@ function createTestConfig(): BookingApiConfig {
       staleIdempotencyLockSeconds: 120,
     },
     abuseProtection: { enabled: false, captchaChallengesEnabled: false, maxTrackedBuckets: 100 },
-    email: { fromAddress: "test@example.com", region: "us-east-1", disabled: true },
+    email: { fromAddress: "test@example.com", region: "us-east-1", disabled: true, staffNotificationEmail: "staff@example.com" },
     observability: { serviceName: "booking-api", environment: "test", logLevel: "silent", metricsEnabled: false },
   };
 }
@@ -278,15 +278,13 @@ afterEach(() => {
 
 // ── Gap 1 — no confirmation email on the normal (browser-capture) path ────────
 //
-// paypalOrders.ts only ever calls createEmailClient() once, for
-// sendPaymentPending() during order creation (line ~160). The capture handler
-// never sends a booking-confirmed email — that only happens from the PayPal
-// webhook (paypalWebhooks.ts:585), which early-returns before emailing
-// whenever it finds the session already `booking_confirmed` (the normal case,
-// since the browser's own capture call already made that transition).
-// Net effect: guests who complete checkout never get a confirmation email.
+// FIXED. handleCapturePayPalOrder (paypalOrders.ts) now sends the same
+// booking-confirmed email the PayPal webhook handler sends, scoped to only
+// the request that actually made the paypal_order_created -> booking_confirmed
+// transition (tracked via `justConfirmed`) so a race with the webhook can't
+// double-send.
 
-test.failing("known gap: browser-driven capture sends a booking-confirmed email to the guest", async () => {
+test("known gap: browser-driven capture sends a booking-confirmed email to the guest", async () => {
   global.fetch = happyPathFetch() as typeof fetch;
   const sendBookingConfirmedSpy = jest.spyOn(EmailClient.prototype, "sendBookingConfirmed");
   const handler = createBookingApiHandler(config);
@@ -298,17 +296,18 @@ test.failing("known gap: browser-driven capture sends a booking-confirmed email 
 
 // ── Gap 2 — portal help/cancellation requests discard the guest's message ─────
 //
-// handlePortalHelpRequest / handlePortalCancellationRequest (portalPages.ts)
-// only call observability.logger.info / recordStateTransition /
-// recordSecurityEvent — none of which persist the message body (it's
-// explicitly excluded from the structured log to avoid PII). No email client
-// is created and no repository write happens, so the text the guest typed
-// reaches no human. EmailClient is the only outbound-communication channel
-// this codebase has (see sendDepositHandoff's use of config.email.contactEmail
-// for exactly this "notify a human" purpose), so the fix should route through
-// it; assert the guest's message text is contained in an outbound email.
+// FIXED. handlePortalHelpRequest / handlePortalCancellationRequest
+// (portalPages.ts) now call EmailClient.sendStaffHelpRequest /
+// sendStaffCancellationRequest (both new, following the existing
+// sendStaffCancellationAlert/sendStaffDepositReview staff-notification
+// pattern in email.ts) inside the same non-fatal try/catch shape used
+// elsewhere in this codebase for post-response notifications. The guest's
+// free-text message is HTML-escaped in the new email templates
+// (emailTemplates.ts) before interpolation — the one genuinely free-form
+// user-text field these templates handle, unlike the bounded/structured
+// fields (IDs, dates, amounts) the existing templates interpolate.
 
-test.failing("known gap: portal help request forwards the guest's message to a human via email", async () => {
+test("known gap: portal help request forwards the guest's message to a human via email", async () => {
   global.fetch = happyPathFetch() as typeof fetch;
   const handler = createBookingApiHandler(config);
   const { reservationPublicId } = await driveToBookingConfirmed(handler);
@@ -326,7 +325,7 @@ test.failing("known gap: portal help request forwards the guest's message to a h
   expect(forwarded).toBe(true);
 });
 
-test.failing("known gap: portal cancellation request forwards the guest's message to a human via email", async () => {
+test("known gap: portal cancellation request forwards the guest's message to a human via email", async () => {
   global.fetch = happyPathFetch() as typeof fetch;
   const handler = createBookingApiHandler(config);
   const { reservationPublicId } = await driveToBookingConfirmed(handler);

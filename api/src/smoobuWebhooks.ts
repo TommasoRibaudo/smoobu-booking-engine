@@ -53,7 +53,7 @@ export async function handleSmoobuWebhook(
   const webhookEvents = getWebhookEventRepository(config);
   const payloadHash = sha256(request.rawBody);
 
-  const { inserted } = await webhookEvents.insertIfNew({
+  const { inserted, record } = await webhookEvents.insertIfNew({
     provider: "smoobu",
     externalEventId: dedupeKey,
     eventType: payload.action,
@@ -61,7 +61,10 @@ export async function handleSmoobuWebhook(
     payload: body,
   });
 
-  if (!inserted) {
+  // Only short-circuit a redelivery once it has actually been processed; a row
+  // left 'pending'/'failed' by a crashed prior delivery must be reprocessed
+  // rather than swallowed (R8). Action handlers are idempotent / CAS-guarded.
+  if (!inserted && record.status === "processed") {
     request.observability.recordStateTransition({
       entityType: "webhook_event",
       toState: "duplicate",

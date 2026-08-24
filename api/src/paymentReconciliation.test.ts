@@ -587,3 +587,27 @@ describe("reconcilePendingPayments", () => {
     );
   });
 });
+
+describe("reconcilePendingPayments — race-condition regression (R9)", () => {
+  it("confirms a session left in paypal_order_created after its payment was captured", async () => {
+    const sessions = new InMemoryBookingSessionRepository();
+    const payments = new InMemoryPaymentRepository();
+
+    const { session } = await seedPendingPayment(sessions, payments);
+    // The payment captured but the session confirmation never landed — a crash
+    // between markCaptured and markBookingConfirmed. The main scan filters on
+    // payment status ('order_created') and can never re-pick this.
+    await payments.markCaptured({
+      bookingSessionId: session.id,
+      paypalCaptureId: "CAP-R9",
+      capturedAt: NOW,
+    });
+
+    const deps = createDeps({ payments, bookingSessions: sessions });
+    const result = await reconcilePendingPayments(deps);
+
+    expect(result.confirmed).toBe(1);
+    const after = await sessions.getById(session.id);
+    expect(after?.status).toBe("booking_confirmed");
+  });
+});

@@ -358,3 +358,28 @@ describe("processExpiredHolds", () => {
     );
   });
 });
+
+describe("processExpiredHolds — race-condition regression (R1)", () => {
+  it("does not expire or cancel a hold whose session is already booking_confirmed", async () => {
+    const holds = new InMemoryHoldRepository();
+    const sessions = new InMemoryBookingSessionRepository();
+    const smoobuClient = createMockSmoobuClient();
+
+    const { session } = await seedActiveHold(holds, sessions, { expiresAt: PAST });
+
+    // Payment landed and the session is confirmed, but the hold was left `active`
+    // (e.g. the Smoobu promotion failed after capture). The expiry sweep must not
+    // cancel this now-paid booking's reservation.
+    await sessions.markPaypalOrderCreated({ bookingSessionId: session.id, paypalOrderId: "PP-R1" });
+    await sessions.markBookingConfirmed({ bookingSessionId: session.id, confirmedAt: NOW });
+
+    const deps = createDeps({ holds, bookingSessions: sessions, smoobuClient });
+    const result = await processExpiredHolds(deps);
+
+    expect(smoobuClient.cancelReservation).not.toHaveBeenCalled();
+    expect(result.expired).toBe(0);
+    expect(result.smoobuCancelled).toBe(0);
+    const after = await holds.getByBookingSessionId(session.id);
+    expect(after?.status).toBe("active");
+  });
+});

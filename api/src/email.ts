@@ -24,6 +24,8 @@ import {
   renderHoldCreatedEmail,
   renderPaymentPendingEmail,
   renderStaffCancellationEmail,
+  renderStaffCancellationRequestEmail,
+  renderStaffHelpRequestEmail,
 } from "./emailTemplates";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -234,6 +236,72 @@ export class EmailClient {
     const { subject, html, text } = renderStaffCancellationEmail(input);
     await this.send(recipient, subject, html, text, {
       template: "staff_cancellation",
+      reservationPublicId: session.reservationPublicId,
+      bookingSessionId: session.id,
+    });
+  }
+
+  /**
+   * Forwards a guest's portal help-request message to staff. Skipped with a
+   * warning when no staff address is configured — same non-fatal shape as the
+   * other staff-facing sends, since this is called from a route that must
+   * still return 200 to the guest either way.
+   */
+  async sendStaffHelpRequest(
+    session: BookingSessionRecord,
+    propertyName: string,
+    options: { type?: string; message: string }
+  ): Promise<void> {
+    const recipient = this.config.staffNotificationEmail;
+    if (!recipient) {
+      this.logger.warn("staff_notification_email_not_configured", {
+        template: "staff_help_request",
+        reservationPublicId: session.reservationPublicId,
+      });
+      return;
+    }
+
+    const input: EmailTemplateInput = {
+      ...buildTemplateInput(session, propertyName),
+      ...(options.type ? { helpRequestType: options.type } : {}),
+      guestMessage: options.message,
+    };
+    const { subject, html, text } = renderStaffHelpRequestEmail(input);
+    await this.send(recipient, subject, html, text, {
+      template: "staff_help_request",
+      reservationPublicId: session.reservationPublicId,
+      bookingSessionId: session.id,
+    });
+  }
+
+  /**
+   * Forwards a guest's portal cancellation *request* to staff — the booking
+   * is still `booking_confirmed` at this point, nothing has been cancelled.
+   * Distinct from sendStaffCancellationAlert, which fires after the guest's
+   * self-service cancel endpoint has already cancelled the booking.
+   */
+  async sendStaffCancellationRequest(
+    session: BookingSessionRecord,
+    propertyName: string,
+    options: { reason: string; message?: string }
+  ): Promise<void> {
+    const recipient = this.config.staffNotificationEmail;
+    if (!recipient) {
+      this.logger.warn("staff_notification_email_not_configured", {
+        template: "staff_cancellation_request",
+        reservationPublicId: session.reservationPublicId,
+      });
+      return;
+    }
+
+    const input: EmailTemplateInput = {
+      ...buildTemplateInput(session, propertyName),
+      cancellationReason: options.reason,
+      ...(options.message ? { guestMessage: options.message } : {}),
+    };
+    const { subject, html, text } = renderStaffCancellationRequestEmail(input);
+    await this.send(recipient, subject, html, text, {
+      template: "staff_cancellation_request",
       reservationPublicId: session.reservationPublicId,
       bookingSessionId: session.id,
     });

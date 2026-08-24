@@ -24,6 +24,7 @@ import { htmlResponse } from "./http/response";
 import { presignReceiptDownload } from "./depositReceipt";
 import { BOOKING_PROPERTIES_BY_ID } from "./propertyCatalog";
 import { createSmoobuClient, SmoobuProviderError } from "./smoobuClient";
+import { promoteSmoobuReservation } from "./smoobuPromotion";
 import { verifySignedToken, type SignedTokenPayload } from "./signedTokens";
 import { ApiResponse, BookingApiConfig, RouteRequest } from "./types";
 
@@ -68,13 +69,18 @@ export async function handleStaffDepositReviewPage(
 
   const isReject = payload.act === "deposit_reject";
 
+  // The form action is relative ("../deposit-review"), not root-relative. This page is served
+  // at .../api/staff/deposit-review/{token} behind an API Gateway stage prefix (e.g. /prod)
+  // that this Lambda never sees but the browser does. A root-relative "/api/staff/deposit-review"
+  // drops that prefix and 403s at the gateway ("Missing Authentication Token"); the relative form
+  // resolves against the page's own URL and lands on the sibling POST route either way.
   return htmlResponse(
     200,
     renderPage({
       heading: isReject ? "Reject deposit booking" : "Confirm deposit booking",
       body: `
 ${renderSummary(session, property?.name, receiptUrl)}
-<form method="POST" action="/api/staff/deposit-review">
+<form method="POST" action="../deposit-review">
   <input type="hidden" name="token" value="${escapeHtml(token)}" />
   <button type="submit" class="${isReject ? "danger" : "primary"}">
     ${isReject ? "Reject and release the dates" : "Confirm — the money has arrived"}
@@ -130,6 +136,31 @@ export async function handleStaffDepositReviewSubmit(
   const hold = await holds.getByBookingSessionId(session.id);
 
   if (payload.act === "deposit_reject") {
+    // Guard the destructive Smoobu cancel behind a local compare-and-swap FIRST.
+    // markStaffRejected only fires from hold_active, so if a guest's deposit was
+    // confirmed concurrently (between resolveToken's read and now) this returns
+    // undefined and we abort WITHOUT releasing the reservation — otherwise a late
+    // reject would cancel a paid booking and put its dates back on sale (R6).
+    const rejectedSession = await sessions.markStaffRejected({
+      bookingSessionId: session.id,
+      reason: "deposit_not_received",
+      cancelledAt: new Date().toISOString(),
+    });
+
+    if (!rejectedSession) {
+      const current = (await sessions.getById(session.id)) ?? session;
+      return htmlResponse(
+        current.status === "booking_confirmed" ? 200 : 409,
+        renderPage({
+          heading: current.status === "booking_confirmed" ? "Already confirmed" : "No longer actionable",
+          body: `<p>Reservation <strong>${escapeHtml(session.reservationPublicId)}</strong> is <strong>${escapeHtml(
+            current.status
+          )}</strong> and can no longer be rejected.</p>`,
+        }),
+        request.responseHeaders
+      );
+    }
+
     if (hold?.smoobuReservationId) {
       try {
         const smoobuClient = await createSmoobuClient(config);
@@ -141,12 +172,6 @@ export async function handleStaffDepositReviewSubmit(
       }
     }
 
-    await sessions.markCancelled({
-      bookingSessionId: session.id,
-      reason: "deposit_not_received",
-      cancelledBy: "staff",
-      cancelledAt: new Date().toISOString(),
-    });
     if (hold) {
       await holds.cancelHold(hold.id);
     }
@@ -187,43 +212,38 @@ export async function handleStaffDepositReviewSubmit(
     tokenJti: payload.jti,
   });
 
-  // The hold must leave the expiry worker's reach. listExpiredHolds sweeps
-  // creating|active holds past expires_at, so a confirmed booking left `active`
-  // would have its Smoobu reservation cancelled when the TTL elapsed.
+  // Move the hold to `converted` immediately, taking it out of the expiry
+  // worker's reach: listExpiredHolds sweeps creating|active holds past
+  // expires_at, so a confirmed booking left `active` would have its Smoobu
+  // reservation cancelled at the TTL. This runs synchronously and reliably,
+  // *before* the best-effort Smoobu promotion below (R1).
   if (hold) {
-    try {
-      await holds.convertHold({
+    const confirmedHold = await holds.markHoldConfirmed(hold.id).catch(() => hold);
+    if (confirmedHold.status !== "converted") {
+      request.observability.logger.error("booking_confirmed_hold_already_expired", {
+        bookingSessionId: session.id,
         holdId: hold.id,
-        newSmoobuReservationId: hold.smoobuReservationId ?? 0,
-        newSmoobuChannelId: hold.smoobuChannelId,
-      });
-    } catch (error) {
-      request.observability.logger.error("deposit_confirm_hold_convert_failed", {
-        bookingSessionId: session.id,
-        error: error instanceof Error ? error.message : String(error),
+        holdStatus: confirmedHold.status,
       });
     }
-  }
-
-  // Mark the Smoobu reservation as paid so the dashboard reflects reality.
-  if (hold?.smoobuReservationId) {
-    try {
-      const smoobuClient = await createSmoobuClient(config);
-      await smoobuClient.updateReservation(
-        hold.smoobuReservationId,
-        {
-          notice: `${SITE_NAME} manual deposit CONFIRMED by staff on ${confirmedAt}. Reservation ${session.reservationPublicId}.`,
-          priceStatus: 1,
-          prepaymentStatus: 1,
-        },
-        request.observability
-      );
-    } catch (error) {
-      request.observability.logger.warn("deposit_confirm_smoobu_update_failed", {
+    // Promote the Smoobu reservation from Blocked channel to Homepage (website) —
+    // the same mechanism PayPal captures use, see smoobuPromotion.ts.
+    await promoteSmoobuReservation(
+      {
+        session: confirmedSession,
+        hold: confirmedHold,
+        notice: `${SITE_NAME} manual deposit CONFIRMED by staff on ${confirmedAt}. Reservation ${session.reservationPublicId}.`,
+        amountCents: confirmedSession.totalAmountCents ?? 0,
+      },
+      holds,
+      config,
+      request.observability
+    ).catch((err) => {
+      request.observability.logger.warn("deposit_confirm_smoobu_promotion_unexpected_error", {
         bookingSessionId: session.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: err instanceof Error ? err.message : String(err),
       });
-    }
+    });
   }
 
   request.observability.recordStateTransition({

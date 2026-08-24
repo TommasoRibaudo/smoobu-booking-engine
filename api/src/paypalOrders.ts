@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash } from "crypto";
 import { BookingSessionRecord, BookingSessionRepository } from "./bookingSessions";
 import { createEmailClient } from "./email";
 import { HoldRepository } from "./holds";
@@ -11,6 +11,14 @@ import { createPayPalClient, PayPalProviderError } from "./paypalClient";
 import { BOOKING_PROPERTIES_BY_ID, listingUrlForLanguage } from "./propertyCatalog";
 import { promoteSmoobuReservation } from "./smoobuPromotion";
 import { ApiResponse, BookingApiConfig, RouteObservability, RouteRequest } from "./types";
+
+/**
+ * Stable PayPal-Request-Id for a given client Idempotency-Key + session + phase.
+ * Same inputs → same id, so a retried createOrder is deduplicated by PayPal.
+ */
+export function derivePaypalRequestId(idempotencyKey: string, bookingSessionId: string, phase: "order" | "capture"): string {
+  return createHash("sha256").update(`${idempotencyKey}:${bookingSessionId}:${phase}`).digest("hex");
+}
 
 function getHoldRepository(config: BookingApiConfig): HoldRepository {
   if (!config.holds) {
@@ -69,16 +77,27 @@ export async function handleCreatePayPalOrder(
     throw new ApiError(409, "hold_no_longer_active", "The hold is no longer active.");
   }
 
-  // Pre-assign both idempotency keys so retries to PayPal are safe
-  const paypalRequestIdOrder = randomUUID();
-  const paypalRequestIdCapture = randomUUID();
+  // Derive the PayPal-Request-Id deterministically from the client's
+  // Idempotency-Key and the session, rather than a fresh UUID per attempt. If a
+  // retry reaches createOrder again (e.g. the previous attempt created the order
+  // on PayPal but crashed before persisting the payment row), PayPal sees the
+  // same request id and returns the *same* order instead of creating a duplicate
+  // (R7). The capture id is likewise stable and persisted for the capture step.
+  const paypalRequestIdOrder = derivePaypalRequestId(idempotencyKey, session.id, "order");
+  const paypalRequestIdCapture = derivePaypalRequestId(idempotencyKey, session.id, "capture");
 
   const paypalClient = await createPayPalClient(config);
 
   // Derive return/cancel URLs from the request's Origin header so the same
   // Lambda serves both localhost and production without env var changes.
+  //
+  // The SPA only bare-roots the "home" route for English (see pathForKey()
+  // in src/routes.config.ts) — every other route, "book" included, is
+  // registered under its locale prefix ("/en/book", "/es/book"). There is no
+  // legacy redirect covering "/book" the way there is for prerendered
+  // listing pages, so a bare "/book" path 404s.
   const requestOrigin = getHeader(request.headers, "origin")?.trim();
-  const bookPath = session.language === "es" ? "/bookES" : "/book";
+  const bookPath = session.language === "es" ? "/es/book" : "/en/book";
   const returnUrl = requestOrigin
     ? `${requestOrigin}${bookPath}/return`
     : config.paypal.orderReturnUrl;
@@ -114,6 +133,7 @@ export async function handleCreatePayPalOrder(
       reservationPublicId: session.reservationPublicId,
       provider: "paypal",
       errorCode: safeErrorCode(error),
+      errorDetail: safeErrorDetail(error),
     });
     throw error;
   }
@@ -245,6 +265,7 @@ export async function handleCapturePayPalOrder(
         reservationPublicId: session.reservationPublicId,
         provider: "paypal",
         errorCode: safeErrorCode(error),
+        errorDetail: safeErrorDetail(error),
       });
     }
     throw error;
@@ -258,10 +279,30 @@ export async function handleCapturePayPalOrder(
     capturedAt,
   });
 
-  const confirmedSession = await sessions.markBookingConfirmed({
-    bookingSessionId: session.id,
-    confirmedAt: capturedAt,
-  });
+  let confirmedSession: BookingSessionRecord;
+  // Tracks whether *this* request is the one that made the transition, as
+  // opposed to discovering it already happened (see the catch branch below).
+  // Only the transitioning request should send the confirmation email — the
+  // webhook path may equally have won that race, and it already sends its own.
+  let justConfirmed = false;
+  try {
+    confirmedSession = await sessions.markBookingConfirmed({
+      bookingSessionId: session.id,
+      confirmedAt: capturedAt,
+    });
+    justConfirmed = true;
+  } catch (error) {
+    // A concurrent webhook or the reconciliation sweep may have confirmed this
+    // session first; markBookingConfirmed's CAS then matches 0 rows and throws.
+    // The payment did succeed, so treat an already-confirmed session as success
+    // instead of surfacing a 500 to the guest (R3).
+    const latest = await sessions.getById(session.id);
+    if (latest?.status === "booking_confirmed") {
+      confirmedSession = latest;
+    } else {
+      throw error;
+    }
+  }
 
   // Also reported from the webhook and the reconciliation sweep. Meta dedupes on
   // event_id and GA4 on transaction_id, so the booking still counts exactly once.
@@ -301,13 +342,24 @@ export async function handleCapturePayPalOrder(
   const holds = getHoldRepository(config);
   const hold = await holds.getByBookingSessionId(session.id).catch(() => undefined);
   if (hold) {
+    // Move the hold to `converted` before the best-effort promotion runs, so the
+    // expiry sweep can never cancel this now-paid booking's Smoobu reservation
+    // even if promotion fails (R1). Fatal-safe: on any error we still attempt
+    // promotion with the hold we have.
+    const confirmedHold = await holds.markHoldConfirmed(hold.id).catch(() => hold);
+    if (confirmedHold.status !== "converted") {
+      request.observability.logger.error("booking_confirmed_hold_already_expired", {
+        bookingSessionId: session.id,
+        holdId: hold.id,
+        holdStatus: confirmedHold.status,
+      });
+    }
     await promoteSmoobuReservation(
       {
         session,
-        hold,
-        captureId: captureResult.captureId,
+        hold: confirmedHold,
+        notice: buildPaypalConfirmedNotice(session, captureResult.captureId, capturedAt),
         amountCents: captureResult.amountCents,
-        confirmedAt: capturedAt,
       },
       holds,
       config,
@@ -320,6 +372,23 @@ export async function handleCapturePayPalOrder(
     });
   }
 
+  // Send booking_confirmed email — non-fatal; must not affect the guest's
+  // response. Only fires for the request that actually made the transition
+  // (see `justConfirmed` above); the webhook path sends its own on the rare
+  // race where it wins instead (paypalWebhooks.ts's early-return on an
+  // already-`booking_confirmed` session prevents a double-send there too).
+  if (justConfirmed) {
+    try {
+      const emailClient = createEmailClient(config.email, request.observability.logger);
+      await emailClient.sendBookingConfirmed(confirmedSession, property.name, captureResult.captureId);
+    } catch (emailError) {
+      request.observability.logger.error("booking_confirmed_email_failed", {
+        bookingSessionId: session.id,
+        error: emailError instanceof Error ? emailError.message : String(emailError),
+      });
+    }
+  }
+
   const updatedPayment = await payments.getByBookingSessionId(session.id);
   return jsonResponse(
     200,
@@ -329,6 +398,15 @@ export async function handleCapturePayPalOrder(
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+export function buildPaypalConfirmedNotice(session: BookingSessionRecord, captureId: string, confirmedAt: string): string {
+  return [
+    `Confirmed — PayPal payment received.`,
+    `Reservation ID: ${session.reservationPublicId}`,
+    `PayPal capture: ${captureId}`,
+    `Confirmed at: ${confirmedAt}`,
+  ].join("\n");
+}
 
 function getRequiredBookingSessionRepository(config: BookingApiConfig): BookingSessionRepository {
   if (!config.bookingSessions) {
@@ -475,4 +553,9 @@ function safeErrorCode(error: unknown): string {
   if (error instanceof ApiError) return error.code;
   if (error instanceof Error) return error.name;
   return "unknown_error";
+}
+
+function safeErrorDetail(error: unknown): string | undefined {
+  if (error instanceof PayPalProviderError) return error.providerDetail;
+  return undefined;
 }

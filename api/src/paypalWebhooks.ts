@@ -9,6 +9,7 @@ import { jsonResponse } from "./http/response";
 import { PaymentRepository } from "./payments";
 import { BOOKING_PROPERTIES_BY_ID } from "./propertyCatalog";
 import { createPayPalClient, PayPalVerifySignatureInput } from "./paypalClient";
+import { buildPaypalConfirmedNotice } from "./paypalOrders";
 import { promoteSmoobuReservation } from "./smoobuPromotion";
 import { ApiResponse, BookingApiConfig, RouteRequest } from "./types";
 
@@ -371,7 +372,7 @@ export async function handlePayPalWebhook(
   // 4. Dedupe — idempotent insert
   const webhookEvents = getWebhookEventRepository(config);
   const payloadHash = sha256(request.rawBody);
-  const { inserted } = await webhookEvents.insertIfNew({
+  const { inserted, record } = await webhookEvents.insertIfNew({
     provider: "paypal",
     externalEventId,
     eventType,
@@ -379,7 +380,12 @@ export async function handlePayPalWebhook(
     payload: event,
   });
 
-  if (!inserted) {
+  // Only treat a redelivery as a duplicate once it has actually been *processed*.
+  // If a prior delivery inserted the row but crashed before markProcessed, the
+  // status is still 'pending'/'failed' and we must reprocess — otherwise a missed
+  // capture confirmation would be silently swallowed (R8). Downstream transitions
+  // are all CAS-guarded, so reprocessing an already-applied event is a no-op.
+  if (!inserted && record.status === "processed") {
     request.observability.recordStateTransition({
       entityType: "webhook_event",
       toState: "duplicate",
@@ -586,6 +592,15 @@ async function handleCaptureCompleted(
     if (holds) {
       const hold = await holds.getByBookingSessionId(session.id).catch(() => undefined);
       if (hold) {
+        // Take the hold out of the expiry sweep's reach before promotion (R1).
+        const confirmedHold = await holds.markHoldConfirmed(hold.id).catch(() => hold);
+        if (confirmedHold.status !== "converted") {
+          request.observability.logger.error("booking_confirmed_hold_already_expired", {
+            bookingSessionId: session.id,
+            holdId: hold.id,
+            holdStatus: confirmedHold.status,
+          });
+        }
         // Extract amount from webhook event; fall back to session totalAmountCents
         const captureAmount = capture?.amount?.value
           ? Math.round(parseFloat(capture.amount.value) * 100)
@@ -594,10 +609,9 @@ async function handleCaptureCompleted(
         await promoteSmoobuReservation(
           {
             session,
-            hold,
-            captureId,
+            hold: confirmedHold,
+            notice: buildPaypalConfirmedNotice(session, captureId, confirmedAt),
             amountCents: captureAmount,
-            confirmedAt,
           },
           holds,
           config,

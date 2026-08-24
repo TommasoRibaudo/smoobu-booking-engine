@@ -275,3 +275,38 @@ test("RDS overlap constraint error (23P01) is mapped to 409 property_no_longer_a
     retryable: false,
   });
 });
+
+// ─── Race-condition regression: orphaned Smoobu reservation cleanup (R4) ──────
+
+test("R4: cancels the just-created Smoobu reservation when hold activation fails", async () => {
+  const fetchFn = happySmoobuFetch();
+  global.fetch = fetchFn as typeof fetch;
+  const config = createTestConfig();
+  // Simulate the DB failing right after the Smoobu reservation was created.
+  jest.spyOn(holds, "activateHold").mockRejectedValue(new Error("db unavailable"));
+  const handler = createBookingApiHandler(config);
+
+  const search = await handler(searchEvent("device-r4"));
+  const body = JSON.parse(search.body);
+
+  const holdRequest = {
+    quoteId: body.quoteId,
+    bookingSessionId: body.bookingSessionId,
+    propertyId: body.properties[0].propertyId,
+    paymentMethod: "paypal",
+    guest: { firstName: "Ana", lastName: "Mora", email: "ana@example.com" },
+    portalPassword: "correct horse battery staple",
+    termsAccepted: true,
+  };
+
+  const resp = await handler(holdEvent(holdRequest, "r4-idempotency-key-000001", "203.0.113.9"));
+  expect(resp.statusCode).toBeGreaterThanOrEqual(500);
+
+  // The reservation created on Smoobu (id 9900099) must be cancelled in the catch.
+  const deleteCall = fetchFn.mock.calls.find(
+    ([url, init]) =>
+      String((init as RequestInit | undefined)?.method ?? "").toUpperCase() === "DELETE" &&
+      new URL(url.toString()).pathname === "/api/reservations/9900099"
+  );
+  expect(deleteCall).toBeDefined();
+});

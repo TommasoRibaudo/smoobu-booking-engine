@@ -63,15 +63,26 @@ export interface PayPalVerifySignatureResult {
 
 export class PayPalProviderError extends ApiError {
   readonly providerStatusCode?: number;
+  /** Raw PayPal `details[0].issue` (e.g. "PAYEE_ACCOUNT_RESTRICTED") — kept even when `code` falls back to a generic bucket, so logs retain the actual reason. */
+  readonly providerIssue?: string;
+  /** Raw PayPal `details[0].description`, for the same reason. */
+  readonly providerDetail?: string;
 
   constructor(
     statusCode: number,
     code: string,
     message: string,
-    options: { retryable?: boolean; providerStatusCode?: number } = {}
+    options: {
+      retryable?: boolean;
+      providerStatusCode?: number;
+      providerIssue?: string;
+      providerDetail?: string;
+    } = {}
   ) {
     super(statusCode, code, message, { retryable: options.retryable ?? false });
     this.providerStatusCode = options.providerStatusCode;
+    this.providerIssue = options.providerIssue;
+    this.providerDetail = options.providerDetail;
   }
 }
 
@@ -184,6 +195,26 @@ export class PayPalClient {
         "Content-Type": "application/json",
       });
       statusCode = response.status;
+
+      // 422 = PayPal rejected the order we tried to create — a bad request payload
+      // (our bug) or an account-level restriction (e.g. merchant account not fully
+      // verified for live payments), not a "gateway" failure. Handle it explicitly,
+      // like captureOrder's 422 branch, instead of falling into buildPayPalHttpError's
+      // generic 502 — that used to swallow the real `issue`/`description` PayPal sent
+      // back, making it impossible to tell "our payload is malformed" apart from
+      // "PayPal is down" from the logs alone.
+      if (response.status === 422) {
+        const errorBody = await safeParseJson<PayPalErrorResponse>(response);
+        const issue = errorBody?.details?.[0]?.issue ?? "ORDER_CREATE_FAILED";
+        const description = errorBody?.details?.[0]?.description;
+        errorCode = paypalIssueToErrorCode(issue);
+        throw new PayPalProviderError(
+          503,
+          errorCode,
+          description ?? "PayPal could not create the order.",
+          { providerStatusCode: response.status, providerIssue: issue, providerDetail: description }
+        );
+      }
 
       if (!response.ok) {
         const err = await buildPayPalHttpError(response, "paypal_order_create_failed");
@@ -537,6 +568,15 @@ function paypalIssueToErrorCode(issue: string): string {
     DUPLICATE_INVOICE_ID: "duplicate_invoice",
     ORDER_NOT_APPROVED: "paypal_order_not_approved",
     COMPLIANCE_VIOLATION: "payment_compliance_violation",
+    // Order-create-specific issues below — these can't happen at capture time.
+    PAYEE_ACCOUNT_RESTRICTED: "paypal_account_restricted",
+    PAYEE_ACCOUNT_LOCKED_OR_CLOSED: "paypal_account_restricted",
+    PAYEE_NOT_ENABLED_FOR_CARD_PROCESSING: "paypal_account_restricted",
+    CURRENCY_NOT_SUPPORTED_FOR_MERCHANT_COUNTRY: "paypal_currency_not_supported",
+    INVALID_REQUEST: "paypal_invalid_request",
+    INVALID_PARAMETER_SYNTAX: "paypal_invalid_request",
+    INVALID_STRING_LENGTH: "paypal_invalid_request",
+    MISSING_REQUIRED_PARAMETER: "paypal_invalid_request",
   };
   return map[issue] ?? "payment_declined";
 }
@@ -544,9 +584,11 @@ function paypalIssueToErrorCode(issue: string): string {
 async function buildPayPalHttpError(response: Response, defaultCode: string): Promise<PayPalProviderError> {
   const text = await response.text().catch(() => "");
   let issue: string | undefined;
+  let description: string | undefined;
   try {
     const parsed = JSON.parse(text) as PayPalErrorResponse;
     issue = parsed.details?.[0]?.issue;
+    description = parsed.details?.[0]?.description ?? parsed.message;
   } catch {
     // ignore parse failure
   }
@@ -554,6 +596,8 @@ async function buildPayPalHttpError(response: Response, defaultCode: string): Pr
   if (response.status === 401 || response.status === 403) {
     return new PayPalProviderError(503, "provider_auth_failed", "PayPal authentication failed.", {
       providerStatusCode: response.status,
+      providerIssue: issue,
+      providerDetail: description,
     });
   }
 
@@ -561,12 +605,20 @@ async function buildPayPalHttpError(response: Response, defaultCode: string): Pr
     return new PayPalProviderError(503, "provider_unavailable", "PayPal is temporarily unavailable.", {
       retryable: true,
       providerStatusCode: response.status,
+      providerIssue: issue,
+      providerDetail: description,
     });
   }
 
+  // Any other unhandled 4xx. createOrder and captureOrder each handle their
+  // expected 422 cases before reaching here, so this is a genuinely unexpected
+  // rejection — still worth keeping the raw issue/description rather than
+  // discarding them into an opaque "PayPal rejected the request" bucket.
   const code = issue ? paypalIssueToErrorCode(issue) : defaultCode;
   return new PayPalProviderError(502, code, "PayPal rejected the request.", {
     providerStatusCode: response.status,
+    providerIssue: issue,
+    providerDetail: description,
   });
 }
 

@@ -100,7 +100,7 @@ function parseLogLevel(value: string | undefined): LogLevel {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BookingApiConfig {
   const secrets = createSecretProvider(env);
-  return {
+  const config: BookingApiConfig = {
     allowedOrigins: splitCsv(env.BOOKING_API_ALLOWED_ORIGINS),
     maxBodyBytes: parseMaxBodyBytes(env.BOOKING_API_MAX_BODY_BYTES),
     secrets,
@@ -180,6 +180,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BookingApiConf
       debug: parseBoolean(env.SERVER_CONVERSIONS_DEBUG, false),
     },
   };
+
+  validateIdempotencyLockWindow(config);
+  return config;
+}
+
+/**
+ * The stale-idempotency-lock window is how long an in-progress idempotency key may
+ * sit before a retry is allowed to reclaim it (holds.ts reserveIdempotencyKey). If
+ * that window is shorter than the worst-case time a hold request spends calling
+ * Smoobu, a merely-slow original request can be reclaimed and run concurrently with
+ * its retry — firing two Smoobu reservation creations (R5). Fail fast on misconfig.
+ */
+function validateIdempotencyLockWindow(config: BookingApiConfig): void {
+  const staleLockMs = config.hold.staleIdempotencyLockSeconds * 1_000;
+  // Smoobu availability recheck + reservation create, each up to timeoutMs across
+  // all retry attempts, plus margin for backoff and local work.
+  const worstCaseSmoobuMs = config.smoobu.timeoutMs * (config.smoobu.maxRetries + 1) * 2;
+  const requiredMs = worstCaseSmoobuMs + 5_000;
+  if (staleLockMs <= requiredMs) {
+    throw new Error(
+      `BOOKING_API_STALE_IDEMPOTENCY_LOCK_SECONDS (${config.hold.staleIdempotencyLockSeconds}s = ${staleLockMs}ms) must exceed the worst-case Smoobu round-trip (${requiredMs}ms) so a slow hold request is not reclaimed and run concurrently with its retry. Increase it or lower SMOOBU_TIMEOUT_MS / SMOOBU_MAX_RETRIES.`
+    );
+  }
 }
 
 function parseSmoobuHoldChannelId(value: string | undefined): SmoobuHoldChannelId {

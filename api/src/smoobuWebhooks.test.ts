@@ -422,3 +422,31 @@ test("POST /api/webhooks/smoobu returns 401 when webhook secret is wrong", async
   const body = JSON.parse(response.body);
   expect(body.error.code).toBe("webhook_unauthorized");
 });
+
+// ─── Race-condition regression: webhook reprocess gate (R8) ───────────────────
+
+test("R8: a redelivery of an event left un-processed is reprocessed, not swallowed as duplicate", async () => {
+  const handler = createBookingApiHandler(config);
+  const payload = { action: "newReservation", data: { id: 778899, apartmentId: 2 } };
+
+  // Simulate the first delivery crashing after insertIfNew but before markProcessed:
+  // the stored webhook_event row is left 'pending'.
+  jest.spyOn(webhookEvents, "markProcessed").mockImplementationOnce(async () => {});
+
+  const first = await handler(makeSmoobuWebhookRequest(payload));
+  expect(first.statusCode).toBe(200);
+  expect(JSON.parse(first.body).duplicate).toBeUndefined();
+
+  // Redelivery: because the stored event is still 'pending', the handler must
+  // reprocess it rather than short-circuit it as a duplicate. (Old behavior would
+  // return { duplicate: true } and silently drop the work.)
+  const second = await handler(makeSmoobuWebhookRequest(payload));
+  expect(second.statusCode).toBe(200);
+  expect(JSON.parse(second.body).duplicate).toBeUndefined();
+
+  // Now that it has been processed, a further redelivery IS a duplicate — the gate
+  // still dedupes and does not reprocess forever.
+  const third = await handler(makeSmoobuWebhookRequest(payload));
+  expect(third.statusCode).toBe(200);
+  expect(JSON.parse(third.body).duplicate).toBe(true);
+});

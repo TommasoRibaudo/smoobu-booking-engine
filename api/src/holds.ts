@@ -156,6 +156,16 @@ export interface HoldRepository {
     newSmoobuReservationId: number;
     newSmoobuChannelId: SmoobuChannelId;
   }): Promise<HoldRecord>;
+  /**
+   * Moves an active hold to `converted` in place, keeping its current Smoobu
+   * reservation id and channel. Called synchronously the instant a booking is
+   * confirmed (PayPal capture / staff deposit), *before* the Smoobu-side
+   * promotion runs, so the hold leaves the expiry sweep's reach
+   * (`status in ('creating','active')`) even if promotion later fails. Idempotent:
+   * a hold already `converted` is returned unchanged. A hold the sweep already
+   * expired is returned as-is (the caller logs it for recovery).
+   */
+  markHoldConfirmed(holdId: string): Promise<HoldRecord>;
   expireHold(holdId: string): Promise<HoldRecord>;
   cancelHold(holdId: string): Promise<HoldRecord>;
   listExpiredHolds(now: string): Promise<HoldRecord[]>;
@@ -459,7 +469,7 @@ export class RdsHoldRepository implements HoldRepository {
           smoobu_channel_id = $3,
           updated_at = now()
         where id = $1
-          and status = 'active'
+          and status in ('active', 'converted')
         returning ${HOLD_COLUMNS}
       `,
       [input.holdId, input.newSmoobuReservationId, input.newSmoobuChannelId]
@@ -472,16 +482,53 @@ export class RdsHoldRepository implements HoldRepository {
     return this.throwMissingOrInvalidTransition(input.holdId, "active", "converted");
   }
 
+  async markHoldConfirmed(holdId: string): Promise<HoldRecord> {
+    const result = await this.pool.query<HoldRow>(
+      `
+        update holds
+        set
+          status = 'converted',
+          converted_at = coalesce(converted_at, now()),
+          updated_at = now()
+        where id = $1
+          and status in ('active', 'converted')
+        returning ${HOLD_COLUMNS}
+      `,
+      [holdId]
+    );
+
+    if (result.rows[0]) {
+      return mapHoldRow(result.rows[0]);
+    }
+
+    // The hold is no longer active/converted — almost always because the expiry
+    // sweep won an exact-instant race and flipped it to `expired`. Return it as-is
+    // so the caller can log for recovery; the Smoobu-side promotion still runs and
+    // re-creates the reservation for the (already paid) booking.
+    const existing = await this.getById(holdId);
+    if (existing) {
+      return existing;
+    }
+
+    throw new ApiError(500, "hold_state_invalid", `Hold ${holdId} is missing.`);
+  }
+
   async listExpiredHolds(now: string): Promise<HoldRecord[]> {
     const result = await this.pool.query<HoldRow>(
       `
         with expired_candidates as (
-          select id
-          from holds
-          where status in ('creating', 'active')
-            and expires_at <= $1
-          order by expires_at asc
-          for update skip locked
+          select h.id
+          from holds h
+          left join booking_sessions bs on bs.id = h.booking_session_id
+          where h.status in ('creating', 'active')
+            and h.expires_at <= $1
+            -- Never expire (and cancel the Smoobu reservation of) a booking that
+            -- has already been paid/confirmed. The hold can still read 'active'
+            -- here if the confirming path's promotion has not yet flipped it — the
+            -- session status is the authoritative signal. See markHoldConfirmed.
+            and coalesce(bs.status, 'quoted') <> 'booking_confirmed'
+          order by h.expires_at asc
+          for update of h skip locked
         )
         update holds
         set
@@ -709,6 +756,21 @@ export class InMemoryHoldRepository implements HoldRepository {
     return updated;
   }
 
+  async markHoldConfirmed(holdId: string): Promise<HoldRecord> {
+    const existing = this.getRequiredHold(holdId);
+    if (existing.status !== "active" && existing.status !== "converted") {
+      // Sweep won the race (expired/cancelled) — return as-is for the caller to log.
+      return existing;
+    }
+    const updated: HoldRecord = {
+      ...existing,
+      status: "converted",
+      updatedAt: new Date().toISOString(),
+    };
+    this.holdsById.set(updated.id, updated);
+    return updated;
+  }
+
   async expireHold(holdId: string): Promise<HoldRecord> {
     const existing = this.getRequiredHold(holdId);
     const updated: HoldRecord = {
@@ -843,6 +905,11 @@ export async function createSmoobuBackedHold(
   await reserveHoldIdempotency(config, holds, idempotencyKey, requestHash, flavour.idempotencyScope);
 
   let creatingHold: HoldRecord | undefined;
+  // Hoisted so the catch can clean up a Smoobu reservation that was created just
+  // before a later step (activateHold / markHoldActive) threw — otherwise it is
+  // orphaned, silently blocking the calendar (R4).
+  let smoobuClient: Awaited<ReturnType<typeof createSmoobuClient>> | undefined;
+  let createdSmoobuReservationId: number | undefined;
   try {
     const session = await requireQuotedSession(bookingSessions, holdRequest);
     const property = requireProperty(holdRequest.propertyId);
@@ -860,7 +927,7 @@ export async function createSmoobuBackedHold(
         retryable: false,
       });
     }
-    const smoobuClient = await createSmoobuClient(config);
+    smoobuClient = await createSmoobuClient(config);
     const recheckedPrice = await recheckPropertyAvailability(holdRequest, session, property, smoobuClient, customerId, request.observability);
 
     // When non-refundable, the recheck includes the #norefundallowed discount
@@ -890,6 +957,7 @@ export async function createSmoobuBackedHold(
       noticePrefix: flavour.noticePrefix,
       noticeCaveat: flavour.noticeCaveat,
       withPet,
+      nonRefundable: holdRequest.nonRefundable === true,
     });
     const payloadHash = hashJson(reservationPayload);
 
@@ -937,6 +1005,7 @@ export async function createSmoobuBackedHold(
       request.observability
     );
     const smoobuReservationId = parseSmoobuReservationId(createdReservation.data);
+    createdSmoobuReservationId = smoobuReservationId;
 
     const activeHold = await holds.activateHold({
       holdId: creatingHold.id,
@@ -1017,6 +1086,18 @@ export async function createSmoobuBackedHold(
 
     return jsonResponse(200, responseBody, request.responseHeaders);
   } catch (error) {
+    // If the Smoobu reservation was created but a later step failed, cancel it so
+    // it does not orphan and block the calendar. Best-effort: a failure here is
+    // logged and left for the reconciliation/expiry sweeps (R4).
+    if (createdSmoobuReservationId && smoobuClient) {
+      await smoobuClient.cancelReservation(createdSmoobuReservationId, request.observability).catch((cancelError) => {
+        request.observability.logger.error("hold_create_orphan_cancel_failed", {
+          bookingSessionId: holdRequest.bookingSessionId,
+          smoobuReservationId: createdSmoobuReservationId,
+          error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+        });
+      });
+    }
     if (creatingHold) {
       await holds.failHold({
         holdId: creatingHold.id,
@@ -1214,6 +1295,7 @@ function buildSmoobuHoldPayload(input: {
   noticePrefix: string;
   noticeCaveat: string;
   withPet: boolean;
+  nonRefundable: boolean;
 }) {
   return {
     arrivalDate: input.session.arrivalDate,
@@ -1231,7 +1313,8 @@ function buildSmoobuHoldPayload(input: {
       input.expiresAt,
       input.noticePrefix,
       input.noticeCaveat,
-      input.withPet
+      input.withPet,
+      input.nonRefundable
     ),
     adults: input.session.guests,
     children: 0,
@@ -1251,9 +1334,16 @@ function buildSmoobuNotice(
   expiresAt: string,
   noticePrefix: string,
   noticeCaveat: string,
-  withPet: boolean
+  withPet: boolean,
+  nonRefundable: boolean
 ): string {
-  const parts = [`${noticePrefix} Quote ${session.quoteId}. Hold expires ${expiresAt}. ${noticeCaveat}`];
+  // Spelled out on the reservation so staff confirming a SINPE/bank transfer see
+  // that the (already-discounted) price is the non-refundable rate, computed via
+  // the #norefundallowed code at quote time — not an underpayment (#307).
+  const rateNote = nonRefundable
+    ? " Non-refundable rate (#norefundallowed): 10% discount already applied to the price above."
+    : "";
+  const parts = [`${noticePrefix} Quote ${session.quoteId}. Hold expires ${expiresAt}. ${noticeCaveat}${rateNote}`];
 
   // Ahead of the free-text guest note: housekeeping reads this line off the
   // Smoobu reservation, so it must not be buried under a long message.
